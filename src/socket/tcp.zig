@@ -507,7 +507,7 @@ pub const Cubic = struct {
         self.last_update = now;
         const max_f = @as(f64, @floatFromInt(std.math.maxInt(usize)));
         const clamped = @max(@as(f64, 0), @min(w_cubic, max_f));
-        self.cwnd = @min(@max(@as(usize, @intFromFloat(clamped)), self.min_cwnd), self.rwnd);
+        self.cwnd = @min(@max(@as(usize, @trunc(clamped)), self.min_cwnd), self.rwnd);
     }
 
     pub fn postTransmit(_: *Cubic, _: Instant, _: usize) void {}

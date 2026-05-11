@@ -20,7 +20,7 @@ pub fn Cidr(comptime Ip: type) type {
     comptime assertIsIp(Ip);
 
     const BITS = Ip.ADDRESS_LEN * 8;
-    const IntType = std.meta.Int(.unsigned, BITS);
+    const IntType = @Int(.unsigned, BITS);
 
     return struct {
         address: Ip.Address,

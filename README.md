@@ -149,7 +149,7 @@ zig build -Dtarget=aarch64-freestanding-none
 zig build
 ```
 
-Zig version: 0.15.2
+Zig version: 0.16.0
 
 ## Testing
 

@@ -93,10 +93,16 @@ fn writeChecksumField(buf: []u8, raw: u16) void {
     checksum.writeU16(buf[6..8], if (raw == 0) 0xFFFF else raw);
 }
 
-/// Returns the payload portion of a UDP datagram.
+/// Returns the UDP payload, clamped to the datagram's `length` field. The IP
+/// layer must trim any trailing bytes (e.g. link-layer padding) before
+/// handing the datagram to the application -- otherwise padding leaks into
+/// the payload. See issue #2.
 pub fn payloadSlice(data: []const u8) error{Truncated}![]const u8 {
     if (data.len < HEADER_LEN) return error.Truncated;
-    return data[HEADER_LEN..];
+    const length: usize = @as(usize, data[4]) << 8 | @as(usize, data[5]);
+    if (length < HEADER_LEN) return error.Truncated;
+    const end = @min(length, data.len);
+    return data[HEADER_LEN..end];
 }
 
 // -------------------------------------------------------------------------
@@ -147,6 +153,21 @@ test "UDP payload extraction" {
     const p = try payloadSlice(&data);
     try testing.expectEqual(@as(usize, 4), p.len);
     try testing.expectEqual(@as(u8, 0xCA), p[0]);
+}
+
+// Regression for issue #2: trailing bytes past the declared UDP length
+// (typically Ethernet padding) must not appear as payload.
+test "UDP payload clamps trailing padding" {
+    const data = [_]u8{
+        0x00, 0x35, 0xC0, 0x01,
+        0x00, 0x0C, 0x00, 0x00, // length = 12 (8 header + 4 payload)
+        0xCA, 0xFE, 0xBA, 0xBE,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // padding past length
+    };
+    const p = try payloadSlice(&data);
+    try testing.expectEqual(@as(usize, 4), p.len);
+    try testing.expectEqual(@as(u8, 0xCA), p[0]);
+    try testing.expectEqual(@as(u8, 0xBE), p[3]);
 }
 
 const SRC_ADDR: [4]u8 = .{ 192, 168, 1, 1 };

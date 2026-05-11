@@ -181,14 +181,11 @@ pub fn checkLen(data: []const u8) error{ Truncated, BadHeaderLen }!void {
     if (total_len < ihl or total_len > data.len) return error.Truncated;
 }
 
-/// Returns the payload portion of an IPv4 packet (after the header).
+/// Returns the IPv4 payload, clamped to `total_length`. The IP layer must
+/// trim trailing bytes (e.g. Ethernet minimum-frame padding) before handing
+/// the segment to higher layers -- otherwise padding leaks into TCP/UDP
+/// payloads. See issue #2.
 pub fn payloadSlice(data: []const u8) error{ Truncated, BadHeaderLen }![]const u8 {
-    const ihl = try validatedHeaderLen(data);
-    return data[ihl..];
-}
-
-/// Returns the payload clamped to total_length (handles overlong buffers).
-pub fn payloadSliceClamped(data: []const u8) error{ Truncated, BadHeaderLen }![]const u8 {
     const ihl = try validatedHeaderLen(data);
     const end = @min(totalLength(data), data.len);
     if (end < ihl) return error.Truncated;
@@ -263,10 +260,31 @@ test "IPv4 emit produces valid checksum" {
 }
 
 test "IPv4 payload extraction" {
+    // SAMPLE_IPV4 declares total_length=40 (20 header + 20 payload), but
+    // here we only supply 24 bytes (header + 4 of payload). payloadSlice
+    // returns what is present, clamped by data.len.
     const pkt = SAMPLE_IPV4 ++ [_]u8{ 0xDE, 0xAD, 0xBE, 0xEF };
     const p = try payloadSlice(&pkt);
     try testing.expectEqual(@as(usize, 4), p.len);
     try testing.expectEqual(@as(u8, 0xDE), p[0]);
+}
+
+// Regression for issue #2: a minimum-size Ethernet frame (60 bytes minus
+// 14-byte Ethernet header = 46) pads a 40-byte IP+TCP packet with 6 trailing
+// zero bytes. Those padding bytes must NOT appear as TCP payload.
+test "IPv4 payload clamps Ethernet frame padding" {
+    // SAMPLE_IPV4 = 20-byte header with total_length=40. Forge a 40-byte
+    // IP+TCP packet by appending 20 bytes of TCP-header-shaped data, then
+    // 6 bytes of Ethernet padding.
+    var frame: [46]u8 = .{0} ** 46;
+    @memcpy(frame[0..20], &SAMPLE_IPV4);
+    // 20 bytes of arbitrary "TCP header" content
+    for (20..40) |i| frame[i] = 0xAA;
+    // frame[40..46] stays zero -- Ethernet padding
+    const p = try payloadSlice(&frame);
+    try testing.expectEqual(@as(usize, 20), p.len);
+    try testing.expectEqual(@as(u8, 0xAA), p[0]);
+    try testing.expectEqual(@as(u8, 0xAA), p[19]);
 }
 
 // smoltcp uses this byte vector for deconstruct/construct tests -- it has
@@ -296,7 +314,7 @@ test "IPv4 deconstruct raw fields" {
     try testing.expectEqual(Address{ 0x11, 0x12, 0x13, 0x14 }, repr.src_addr);
     try testing.expectEqual(Address{ 0x21, 0x22, 0x23, 0x24 }, repr.dst_addr);
     try testing.expect(verifyChecksum(&SMOLTCP_PACKET_BYTES));
-    const p = try payloadSliceClamped(&SMOLTCP_PACKET_BYTES);
+    const p = try payloadSlice(&SMOLTCP_PACKET_BYTES);
     try testing.expectEqualSlices(u8, &SMOLTCP_PAYLOAD_BYTES, p);
 }
 
@@ -327,7 +345,7 @@ test "IPv4 overlong buffer clamped to total_len" {
     var overlong: [31]u8 = undefined;
     @memcpy(overlong[0..30], &SMOLTCP_PACKET_BYTES);
     overlong[30] = 0x00;
-    const p = try payloadSliceClamped(&overlong);
+    const p = try payloadSlice(&overlong);
     try testing.expectEqual(SMOLTCP_PAYLOAD_BYTES.len, p.len);
 }
 

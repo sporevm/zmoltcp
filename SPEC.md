@@ -162,22 +162,23 @@ wire/ip.zig (7 tests)
   - Cidr(ipv6) containment, prefix_len 0
   - Endpoint and ListenEndpoint for both address families
 
-wire/ipv4.zig (16 tests)
+wire/ipv4.zig (17 tests)
   - Parse IPv4 header (version, IHL, total length, TTL, protocol)
   - Validate header checksum
   - Handle options (IHL > 5)
   - Fragment offset and flags (DF, MF, fragment_offset)
   - Reject invalid version, bad IHL, truncated packets
   - checkLen: validate total_length vs buffer consistency
-  - payloadSliceClamped: payload clamped to total_length
+  - payloadSlice: payload clamped to total_length (issue #2 regression)
   - CIDR contains/broadcast/networkAddr
 
-wire/ipv6.zig (12 tests)
+wire/ipv6.zig (13 tests)
   - Parse IPv6 header (version, traffic class, flow label, hop limit)
   - Next header / protocol field
   - Address classification (multicast, link-local, loopback, unspecified)
   - Solicited-node multicast address computation
   - Roundtrip: parse -> repr -> emit -> compare
+  - payloadSlice: payload clamped to payload_length (issue #2 regression)
 
 wire/ipv6option.zig (7 tests)
   - TLV option parsing (pad1, padN, router alert, RPL)
@@ -208,12 +209,13 @@ wire/tcp.zig (22 tests)
   - Roundtrip for all flag combinations (SYN, ACK, FIN, RST, PSH, URG)
   - Pseudo-header checksum (v4 and v6)
 
-wire/udp.zig (11 tests)
+wire/udp.zig (12 tests)
   - Parse UDP datagram
   - Verify length field consistency
   - Optional checksum (0 = disabled per RFC 768)
   - fillChecksum and verifyChecksum helpers
   - Roundtrip: parse -> repr -> emit -> compare
+  - payloadSlice: payload clamped to length field (issue #2 regression)
 
 wire/icmp.zig (5 tests)
   - Parse echo request/reply

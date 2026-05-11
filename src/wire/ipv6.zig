@@ -207,12 +207,11 @@ pub fn checkLen(data: []const u8) error{ Truncated, BadVersion }!void {
     if (data.len < HEADER_LEN + payload_len) return error.Truncated;
 }
 
+/// Returns the IPv6 payload, clamped to the header's `payload_length` field.
+/// The IP layer must trim any trailing bytes (e.g. link-layer padding) before
+/// handing the segment to higher layers -- otherwise padding leaks into
+/// TCP/UDP payloads. See issue #2.
 pub fn payloadSlice(data: []const u8) error{Truncated}![]const u8 {
-    if (data.len < HEADER_LEN) return error.Truncated;
-    return data[HEADER_LEN..];
-}
-
-pub fn payloadSliceClamped(data: []const u8) error{Truncated}![]const u8 {
     if (data.len < HEADER_LEN) return error.Truncated;
     const payload_len: usize = @as(usize, data[4]) << 8 | @as(usize, data[5]);
     const end = @min(HEADER_LEN + payload_len, data.len);
@@ -285,8 +284,13 @@ test "IPv6 payload extraction" {
     try testing.expectEqual(@as(u8, 0x00), p[0]);
 }
 
-test "IPv6 payload clamped" {
-    const p = try payloadSliceClamped(&REPR_PACKET_BYTES);
+// Regression for issue #2: trailing bytes past the declared payload_length
+// must not appear as payload.
+test "IPv6 payload clamps trailing padding" {
+    var overlong: [REPR_PACKET_BYTES.len + 6]u8 = undefined;
+    @memcpy(overlong[0..REPR_PACKET_BYTES.len], &REPR_PACKET_BYTES);
+    @memset(overlong[REPR_PACKET_BYTES.len..], 0);
+    const p = try payloadSlice(&overlong);
     try testing.expectEqual(@as(usize, 12), p.len);
 }
 

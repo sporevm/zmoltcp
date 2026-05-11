@@ -147,6 +147,18 @@ zig build -Dtarget=aarch64-freestanding-none      # Cross-compile check
 
 Zig version: 0.16.0
 
+## Release Flow
+
+`.github/workflows/release.yml` cuts a GitHub release on every push to
+`master`. It reads `.version` from `build.zig.zon`, fails if a tag
+`v<version>` already exists, otherwise creates the release with
+auto-generated notes. Consumers pin to release tags rather than commit shas.
+
+**PRs targeting `master` MUST bump `.version` in `build.zig.zon`.** This is
+enforced by the `version-check` job in `.github/workflows/ci.yml`, gated to
+`pull_request` events. Pushes directly to master and PRs to other branches
+(e.g. `dev-hotschmoe`) do NOT require a bump.
+
 ## Architecture
 
 smoltcp is the reference. Not a line-by-line port -- we use smoltcp's design
@@ -154,12 +166,16 @@ patterns and test cases, implemented in idiomatic Zig.
 
 ```
 src/
-  wire/       Protocol wire formats (parse + serialize)
-  socket/     Protocol state machines
-  storage/    Ring buffers, TCP segment reassembler
-  iface.zig   Network interface, packet routing
-  stack.zig   Top-level poll loop
-  root.zig    Library entry point
+  wire/             Protocol wire formats (parse + serialize)
+  socket/           Protocol state machines (tcp, udp, icmp, dhcp, dns, raw)
+  storage/          Ring buffer, TCP segment reassembler, packet buffer
+  iface.zig         Network interface, packet routing
+  stack.zig         Top-level poll loop
+  phy.zig           Physical layer abstraction
+  fragmentation.zig IPv4/IPv6 reassembly
+  rpl.zig           RPL routing (6LoWPAN)
+  time.zig          Instant / Duration types
+  root.zig          Library entry point
 ```
 
 ### Key Patterns

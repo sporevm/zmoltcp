@@ -920,16 +920,26 @@ pub fn Socket(comptime Ip: type, comptime max_asm_segs: usize) type {
             }
         }
 
+        // Drain rx_buffer before surfacing state-based errors. Bytes already in
+        // the buffer were ACK'd at the wire layer; refusing to return them on
+        // half-close (.close_wait + rx_fin_received) would silently drop data
+        // when peer sends [Data+FIN] in one segment or back-to-back. Matches
+        // smoltcp / BSD / Linux read() on a half-closed socket.
         pub fn recvSlice(self: *Self, data: []u8) RecvError!usize {
-            try self.checkRecv();
             const size = self.rx_buffer.dequeueSlice(data);
-            self.remote_seq_no = self.remote_seq_no.add(size);
-            return size;
+            if (size > 0) {
+                self.remote_seq_no = self.remote_seq_no.add(size);
+                return size;
+            }
+            try self.checkRecv();
+            return 0;
         }
 
         pub fn peek(self: *Self, max: usize) RecvError![]const u8 {
+            const buf = self.rx_buffer.getAllocated(0, max);
+            if (buf.len > 0) return buf;
             try self.checkRecv();
-            return self.rx_buffer.getAllocated(0, max);
+            return buf;
         }
 
         /// Zero-copy send: calls `f` with writable buffer, returns bytes enqueued.
@@ -950,11 +960,13 @@ pub fn Socket(comptime Ip: type, comptime max_asm_segs: usize) type {
         }
 
         /// Zero-copy recv: calls `f` with readable buffer, returns bytes consumed.
+        /// Drain-first contract -- see `recvSlice` comment.
         pub fn recv(self: *Self, ctx: anytype, f: *const fn (@TypeOf(ctx), []const u8) usize) RecvError!usize {
-            try self.checkRecv();
-
             const available = self.rx_buffer.len();
-            if (available == 0) return 0;
+            if (available == 0) {
+                try self.checkRecv();
+                return 0;
+            }
 
             const buf = self.rx_buffer.getAllocated(0, available);
             const consumed = f(ctx, buf);
@@ -3815,6 +3827,149 @@ test "rx close FIN with data" {
     try testing.expectEqualSlices(u8, "abc", buf[0..3]);
 
     // Next recv should return Finished.
+    try testing.expectError(error.Finished, s.recvSlice(&buf));
+}
+
+// Regression: issue #3 (laminae). recvSlice/peek/recv must drain rx_buffer
+// before surfacing error.Finished. The piggyback [Data+FIN] segment leaves
+// the socket in .close_wait with rx_fin_received=true AND data buffered;
+// caller must still be able to read the buffered data on the first call.
+test "issue #3: recvSlice drains piggyback Data+FIN before Finished" {
+    var s = socketEstablished();
+    _ = sendPacketAt0(&s, TcpRepr{
+        .src_port = SEND_TEMPL.src_port,
+        .dst_port = SEND_TEMPL.dst_port,
+        .control = .fin,
+        .seq_number = REMOTE_SEQ.add(1),
+        .ack_number = LOCAL_SEQ.add(1),
+        .window_len = SEND_TEMPL.window_len,
+        .payload = "HTTP/1.0 200 OK\r\n\r\nbody",
+    });
+    try testing.expectEqual(State.close_wait, s.state);
+    try testing.expect(s.rx_fin_received);
+
+    var buf: [32]u8 = undefined;
+    const n = try s.recvSlice(&buf);
+    try testing.expectEqual(@as(usize, 23), n);
+    try testing.expectEqualSlices(u8, "HTTP/1.0 200 OK\r\n\r\nbody", buf[0..23]);
+
+    try testing.expectError(error.Finished, s.recvSlice(&buf));
+}
+
+test "issue #3: peek returns piggyback Data+FIN payload before Finished" {
+    var s = socketEstablished();
+    _ = sendPacketAt0(&s, TcpRepr{
+        .src_port = SEND_TEMPL.src_port,
+        .dst_port = SEND_TEMPL.dst_port,
+        .control = .fin,
+        .seq_number = REMOTE_SEQ.add(1),
+        .ack_number = LOCAL_SEQ.add(1),
+        .window_len = SEND_TEMPL.window_len,
+        .payload = "abcde",
+    });
+    try testing.expectEqual(State.close_wait, s.state);
+
+    const peeked = try s.peek(16);
+    try testing.expectEqualSlices(u8, "abcde", peeked);
+
+    // Peek does not advance -- still drainable.
+    var buf: [5]u8 = undefined;
+    const n = try s.recvSlice(&buf);
+    try testing.expectEqual(@as(usize, 5), n);
+
+    // After drain, peek should surface Finished.
+    try testing.expectError(error.Finished, s.peek(16));
+}
+
+test "issue #3: zero-copy recv drains piggyback Data+FIN before Finished" {
+    const Sink = struct {
+        bytes: [32]u8 = undefined,
+        len: usize = 0,
+
+        fn consume(self: *@This(), data: []const u8) usize {
+            @memcpy(self.bytes[0..data.len], data);
+            self.len = data.len;
+            return data.len;
+        }
+    };
+
+    var s = socketEstablished();
+    _ = sendPacketAt0(&s, TcpRepr{
+        .src_port = SEND_TEMPL.src_port,
+        .dst_port = SEND_TEMPL.dst_port,
+        .control = .fin,
+        .seq_number = REMOTE_SEQ.add(1),
+        .ack_number = LOCAL_SEQ.add(1),
+        .window_len = SEND_TEMPL.window_len,
+        .payload = "xyz",
+    });
+    try testing.expectEqual(State.close_wait, s.state);
+
+    var sink = Sink{};
+    const consumed = try s.recv(&sink, Sink.consume);
+    try testing.expectEqual(@as(usize, 3), consumed);
+    try testing.expectEqualSlices(u8, "xyz", sink.bytes[0..sink.len]);
+
+    try testing.expectError(error.Finished, s.recv(&sink, Sink.consume));
+}
+
+test "issue #3: back-to-back [Data][FIN] segments drained before Finished" {
+    var s = socketEstablished();
+
+    // Segment 1: data only.
+    _ = sendPacketAt0(&s, TcpRepr{
+        .src_port = SEND_TEMPL.src_port,
+        .dst_port = SEND_TEMPL.dst_port,
+        .seq_number = REMOTE_SEQ.add(1),
+        .ack_number = LOCAL_SEQ.add(1),
+        .window_len = SEND_TEMPL.window_len,
+        .payload = "hello",
+    });
+    try testing.expectEqual(State.established, s.state);
+
+    // Segment 2: FIN only (no payload), processed before any recv call.
+    _ = sendPacketAt0(&s, TcpRepr{
+        .src_port = SEND_TEMPL.src_port,
+        .dst_port = SEND_TEMPL.dst_port,
+        .control = .fin,
+        .seq_number = REMOTE_SEQ.add(1).add(5),
+        .ack_number = LOCAL_SEQ.add(1),
+        .window_len = SEND_TEMPL.window_len,
+    });
+    try testing.expectEqual(State.close_wait, s.state);
+    try testing.expect(s.rx_fin_received);
+
+    var buf: [8]u8 = undefined;
+    const n = try s.recvSlice(&buf);
+    try testing.expectEqual(@as(usize, 5), n);
+    try testing.expectEqualSlices(u8, "hello", buf[0..5]);
+
+    try testing.expectError(error.Finished, s.recvSlice(&buf));
+}
+
+test "issue #3: partial drain across multiple recvSlice calls in close_wait" {
+    var s = socketEstablished();
+    _ = sendPacketAt0(&s, TcpRepr{
+        .src_port = SEND_TEMPL.src_port,
+        .dst_port = SEND_TEMPL.dst_port,
+        .control = .fin,
+        .seq_number = REMOTE_SEQ.add(1),
+        .ack_number = LOCAL_SEQ.add(1),
+        .window_len = SEND_TEMPL.window_len,
+        .payload = "abcdefghij",
+    });
+    try testing.expectEqual(State.close_wait, s.state);
+
+    var buf: [3]u8 = undefined;
+    var total: usize = 0;
+    var out: [10]u8 = undefined;
+    while (total < 10) {
+        const n = try s.recvSlice(&buf);
+        @memcpy(out[total..][0..n], buf[0..n]);
+        total += n;
+    }
+    try testing.expectEqualSlices(u8, "abcdefghij", out[0..]);
+
     try testing.expectError(error.Finished, s.recvSlice(&buf));
 }
 

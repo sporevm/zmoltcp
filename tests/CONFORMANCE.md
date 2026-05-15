@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 818 tests passing** (817 named + 1 root import test)
+**Total: 825 tests passing** (824 named + 1 root import test)
 
 ## Summary
 
@@ -22,7 +22,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | storage/assembler | 38 | 37 | 1 | 37 | PASS |
 | storage/packet_buffer | 10 | 12 | 0 | 12 | PASS |
 | time | 10 | 8 | 2 | 8 | PASS |
-| socket/tcp | 175 | 217 | 3 | 217 | PASS |
+| socket/tcp | 175 | 222 | 3 | 222 | PASS |
 | socket/udp | 16 | 17 | 0 | 17 | PASS |
 | wire/dhcp | 9 | 9 | 0 | 9 | PASS |
 | socket/dhcp | 11 | 11 | 0 | 11 | PASS |
@@ -665,6 +665,11 @@ were never actually run despite being listed here. The test module runs with
 | test_rx_close_fin_in_fin_wait_1 | "rx close FIN in FIN-WAIT-1" | PASS |
 | test_rx_close_fin_in_fin_wait_2 | "rx close FIN in FIN-WAIT-2" | PASS |
 | test_rx_close_fin_with_hole | "rx close FIN with hole" | PASS |
+| (zmoltcp issue #3) | "issue #3: recvSlice drains piggyback Data+FIN before Finished" | PASS |
+| (zmoltcp issue #3) | "issue #3: peek returns piggyback Data+FIN payload before Finished" | PASS |
+| (zmoltcp issue #3) | "issue #3: zero-copy recv drains piggyback Data+FIN before Finished" | PASS |
+| (zmoltcp issue #3) | "issue #3: back-to-back [Data][FIN] segments drained before Finished" | PASS |
+| (zmoltcp issue #3) | "issue #3: partial drain across multiple recvSlice calls in close_wait" | PASS |
 | test_rx_close_rst | "rx close RST" | PASS |
 | test_rx_close_rst_with_hole | "rx close RST with hole" | PASS |
 | test_delayed_ack | "delayed ack" | PASS |

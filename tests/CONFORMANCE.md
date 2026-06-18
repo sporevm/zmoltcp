@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 845 tests passing** (844 named + 1 root import test)
+**Total: 846 tests passing** (845 named + 1 root import test)
 
 ## Summary
 
@@ -40,7 +40,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/ndiscoption | 5 | 9 | 0 | 9 | PASS |
 | wire/ndisc | 2 | 5 | 0 | 5 | PASS |
 | wire/mld | 2 | 7 | 0 | 7 | PASS |
-| wire/icmpv6 | 6 | 9 | 0 | 9 | PASS |
+| wire/icmpv6 | 6 | 10 | 0 | 10 | PASS |
 | iface | 24 | 62 | 1 | 62 | PASS |
 | phy | 0 | 16 | 0 | 16 | PASS |
 | fragmentation | 3 | 16 | 0 | 16 | PASS |
@@ -50,7 +50,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
 | stack | 2 | 114 | 0 | 114 | PASS |
-| **Total** | | **825** | **8** | **825** | **PASS** |
+| **Total** | | **826** | **8** | **826** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -330,6 +330,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/icmpv6.rs:test_echo_emit | "echo reply roundtrip" | PASS |
 | (original) | "bad checksum rejected" | PASS |
 | wire/icmpv6.rs:test_pkt_too_big | "pkt_too_big roundtrip" | PASS |
+| (original) | "pkt_too_big parses partial invoking packet" | PASS |
 | wire/icmpv6.rs:test_dst_unreachable | "dst_unreachable roundtrip" | PASS |
 | (original) | "ndisc via icmpv6" | PASS |
 | (original) | "mld query via icmpv6" | PASS |

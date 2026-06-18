@@ -163,7 +163,7 @@ Use `mise run release` to prepare a release PR branch. It fetches
 `origin/master` and tags, chooses the next patch version by default, creates
 `lox/release-v<version>`, updates `build.zig.zon`, runs the release checks, and
 commits `chore: release v<version>`. Pass an explicit version with
-`mise run release -- 0.2.19`, or preview the next release with
+`mise run release -- 0.3.0`, or preview the next release with
 `mise run release -- --dry-run`.
 
 ## Architecture

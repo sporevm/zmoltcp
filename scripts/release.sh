@@ -11,8 +11,8 @@ Prepares a release version-bump branch from origin/master.
 
 Examples:
   mise run release
-  mise run release -- 0.2.19
-  mise run release -- v0.2.19
+  mise run release -- 0.3.0
+  mise run release -- v0.3.0
   mise run release -- --dry-run
 
 Environment:
@@ -97,7 +97,7 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 echo "Fetching ${release_remote}/${base_branch} and tags..."
-git fetch "$release_remote" --tags --prune
+git fetch "$release_remote" --tags
 
 base_ref="${release_remote}/${base_branch}"
 current_manifest="$(mktemp)"

@@ -458,12 +458,13 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
                     self.processIgmp(ip_payload, device);
                 },
                 .tcp => {
-                    const result = self.routeToTcpSockets(timestamp, ip_repr, ip_payload, !is_local_destination);
+                    const tcp_ingress = parseTcp4Ingress(ip_repr, ip_payload) orelse return;
+                    const result = self.routeToTcpSockets(timestamp, ip_repr, tcp_ingress, !is_local_destination);
                     if (result.reply) |reply| {
                         self.emitTcpReply(ip_repr, reply, device);
                     }
                     if (is_local_destination) {
-                        if (self.iface.processTcp(ip_repr, ip_payload, result.handled)) |response| {
+                        if (self.iface.processTcp(ip_repr, tcp_ingress, result.handled)) |response| {
                             self.emitResponse(response, device);
                         }
                     }
@@ -715,11 +716,12 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
                     }
                 },
                 .tcp => {
-                    const result = self.routeToTcpV6Sockets(timestamp, ip_repr, ip_payload);
+                    const tcp_ingress = parseTcp6Ingress(ip_repr, ip_payload) orelse return;
+                    const result = self.routeToTcpV6Sockets(timestamp, ip_repr, tcp_ingress);
                     if (result.reply) |reply| {
                         self.emitTcpV6Reply(ip_repr, reply, device);
                     }
-                    if (self.iface.processTcpV6(ip_repr, ip_payload, result.handled)) |response| {
+                    if (self.iface.processTcpV6(ip_repr, tcp_ingress, result.handled)) |response| {
                         self.emitResponse(response, device);
                     }
                 },
@@ -794,6 +796,13 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
                 }
             }
             return .{};
+        }
+
+        fn parseTcp4Ingress(ip_repr: ipv4.Repr, raw_tcp: []const u8) ?[]const u8 {
+            _ = tcp_wire.parse(raw_tcp) catch return null;
+            if (device_caps.checksum.tcp.shouldVerifyRx() and
+                !tcp_wire.verifyChecksum(ip_repr.src_addr, ip_repr.dst_addr, raw_tcp)) return null;
+            return raw_tcp;
         }
 
         fn routeToTcpForwarder(
@@ -945,6 +954,13 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
                 }
             }
             return .{};
+        }
+
+        fn parseTcp6Ingress(ip_repr: ipv6.Repr, raw_tcp: []const u8) ?[]const u8 {
+            _ = tcp_wire.parse(raw_tcp) catch return null;
+            if (device_caps.checksum.tcp.shouldVerifyRx() and
+                !tcp_wire.verifyChecksumV6(ip_repr.src_addr, ip_repr.dst_addr, raw_tcp)) return null;
+            return raw_tcp;
         }
 
         fn parseUdp6Ingress(ip_repr: ipv6.Repr, raw_udp: []const u8) ?UdpIngress {
@@ -2292,6 +2308,9 @@ fn emitTestFrame(buf: []u8, ip_repr: ipv4.Repr, payload_data: []const u8) []cons
     const eth_len = ethernet.emit(eth_repr, buf) catch unreachable;
     const ip_len = ipv4.emit(ip_repr, buf[eth_len..]) catch unreachable;
     @memcpy(buf[eth_len + ip_len ..][0..payload_data.len], payload_data);
+    if (ip_repr.protocol == .tcp) {
+        fillTcp4Checksum(buf[eth_len + ip_len ..][0..payload_data.len], ip_repr.src_addr, ip_repr.dst_addr);
+    }
     return buf[0 .. eth_len + ip_len + payload_data.len];
 }
 
@@ -4314,6 +4333,40 @@ test "ChecksumMode shouldVerifyRx and shouldComputeTx" {
     try testing.expect(!none_mode.shouldComputeTx());
 }
 
+test "stack TCP ingress rejects bad checksum" {
+    const TcpSock = tcp_socket.Socket(ipv4, 4);
+    const Sockets = struct { tcp4_sockets: []*TcpSock };
+    const TcpStack = Stack(TestDevice, Sockets);
+
+    var device = TestDevice.init();
+
+    const S = struct {
+        var rx_buf: [64]u8 = .{0} ** 64;
+        var tx_buf: [64]u8 = .{0} ** 64;
+    };
+    @memset(&S.rx_buf, 0);
+    @memset(&S.tx_buf, 0);
+    var sock = TcpSock.init(&S.rx_buf, &S.tx_buf);
+    sock.ack_delay = null;
+    try sock.listen(.{ .port = 4243 });
+
+    var sock_arr = [_]*TcpSock{&sock};
+    var stack = TcpStack.init(LOCAL_HW, .{ .tcp4_sockets = &sock_arr });
+    stack.iface.v4.addIpAddr(.{ .address = LOCAL_IP, .prefix_len = 24 });
+
+    var tcp_buf: [tcp_wire.HEADER_LEN]u8 = undefined;
+    const tcp_segment = buildTcpSegment(&tcp_buf, 4242, 4243, 1000, null, .{ .syn = true }, &.{});
+    var frame_buf: [256]u8 = undefined;
+    const frame = buildIpv4FrameFrom(&frame_buf, REMOTE_IP, LOCAL_IP, .tcp, tcp_segment);
+    frame_buf[ethernet.HEADER_LEN + ipv4.HEADER_LEN + 16] ^= 0xff;
+
+    device.enqueueRx(frame);
+    _ = stack.poll(Instant.ZERO, &device);
+
+    try testing.expectEqual(tcp_socket.State.listen, sock.getState());
+    try testing.expectEqual(@as(?[]const u8, null), device.dequeueTx());
+}
+
 // -------------------------------------------------------------------------
 // IPv6 test helpers
 // -------------------------------------------------------------------------
@@ -4327,6 +4380,25 @@ fn testStackV6() TestStack {
     var s = TestStack.init(LOCAL_HW, {});
     s.iface.setIpv6Addrs(&.{.{ .address = LOCAL_V6, .prefix_len = 64 }});
     return s;
+}
+
+fn fillTcp4Checksum(tcp_segment: []u8, src: ipv4.Address, dst: ipv4.Address) void {
+    if (tcp_segment.len < tcp_wire.HEADER_LEN) return;
+    tcp_segment[16] = 0;
+    tcp_segment[17] = 0;
+    const cksum = tcp_wire.computeChecksum(src, dst, tcp_segment);
+    tcp_segment[16] = @truncate(cksum >> 8);
+    tcp_segment[17] = @truncate(cksum);
+}
+
+fn fillTcp6Checksum(tcp_segment: []u8, src: ipv6.Address, dst: ipv6.Address) void {
+    if (tcp_segment.len < tcp_wire.HEADER_LEN) return;
+    tcp_segment[16] = 0;
+    tcp_segment[17] = 0;
+    const partial = checksum_mod.pseudoHeaderChecksumV6(src, dst, 6, @intCast(tcp_segment.len));
+    const cksum = checksum_mod.finish(checksum_mod.calculate(tcp_segment, partial));
+    tcp_segment[16] = @truncate(cksum >> 8);
+    tcp_segment[17] = @truncate(cksum);
 }
 
 fn buildIpv6FrameFrom(
@@ -4350,6 +4422,9 @@ fn buildIpv6FrameFrom(
         .dst_addr = dst,
     }, buf[eth_len..]) catch unreachable;
     @memcpy(buf[eth_len + ip_len ..][0..payload.len], payload);
+    if (next_header == .tcp) {
+        fillTcp6Checksum(buf[eth_len + ip_len ..][0..payload.len], src, dst);
+    }
     return buf[0 .. eth_len + ip_len + payload.len];
 }
 
@@ -5670,6 +5745,40 @@ test "stack v6 TCP socket receives SYN, replies SYN-ACK" {
     try testing.expectEqual(@as(u16, 9999), tcp_repr.dst_port);
 }
 
+test "stack v6 TCP ingress rejects bad checksum" {
+    const TcpSock = tcp_socket.Socket(ipv6, 4);
+    const Sockets = struct { tcp6_sockets: []*TcpSock };
+    const V6Stack = Stack(TestDevice, Sockets);
+
+    var device = TestDevice.init();
+
+    const S = struct {
+        var rx_buf: [64]u8 = .{0} ** 64;
+        var tx_buf: [64]u8 = .{0} ** 64;
+    };
+    @memset(&S.rx_buf, 0);
+    @memset(&S.tx_buf, 0);
+    var sock = TcpSock.init(&S.rx_buf, &S.tx_buf);
+    sock.ack_delay = null;
+    try sock.listen(.{ .port = 8080 });
+
+    var sock_arr = [_]*TcpSock{&sock};
+    var stack = V6Stack.init(LOCAL_HW, .{ .tcp6_sockets = &sock_arr });
+    stack.iface.setIpv6Addrs(&.{.{ .address = LOCAL_V6, .prefix_len = 64 }});
+
+    var tcp_buf: [tcp_wire.HEADER_LEN]u8 = undefined;
+    const tcp_segment = buildTcpSegment(&tcp_buf, 9999, 8080, 1000, null, .{ .syn = true }, &.{});
+    var frame_buf: [256]u8 = undefined;
+    const frame = buildIpv6Frame(&frame_buf, .tcp, tcp_segment);
+    frame_buf[ethernet.HEADER_LEN + ipv6.HEADER_LEN + 16] ^= 0xff;
+
+    device.enqueueRx(frame);
+    _ = stack.poll(Instant.ZERO, &device);
+
+    try testing.expectEqual(tcp_socket.State.listen, sock.getState());
+    try testing.expectEqual(@as(?[]const u8, null), device.dequeueTx());
+}
+
 test "stack v6 ICMPv6 socket receives echo reply" {
     const IcmpSock = icmp_socket_mod.Socket(ipv6);
     const Sockets = struct { icmp6_sockets: []*IcmpSock };
@@ -6247,6 +6356,9 @@ fn buildRawIpv4(buf: []u8, src: ipv4.Address, dst: ipv4.Address, protocol: ipv4.
         .dst_addr = dst,
     }, buf) catch unreachable;
     @memcpy(buf[ip_len..][0..payload_data.len], payload_data);
+    if (protocol == .tcp) {
+        fillTcp4Checksum(buf[ip_len..][0..payload_data.len], src, dst);
+    }
     return buf[0 .. ip_len + payload_data.len];
 }
 
@@ -6259,6 +6371,9 @@ fn buildRawIpv6(buf: []u8, src: ipv6.Address, dst: ipv6.Address, next_header: ip
         .dst_addr = dst,
     }, buf) catch unreachable;
     @memcpy(buf[ip_len..][0..payload.len], payload);
+    if (next_header == .tcp) {
+        fillTcp6Checksum(buf[ip_len..][0..payload.len], src, dst);
+    }
     return buf[0 .. ip_len + payload.len];
 }
 

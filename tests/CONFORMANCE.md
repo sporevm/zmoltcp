@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 873 tests passing** (872 named + 1 root import test)
+**Total: 876 tests passing** (875 named + 1 root import test)
 
 ## Summary
 
@@ -13,7 +13,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/arp | 4 | 8 | 0 | 8 | PASS |
 | wire/ip | 0 | 7 | 0 | 7 | PASS |
 | wire/ipv4 | 15 | 17 | 0 | 17 | PASS |
-| wire/tcp | 9 | 23 | 0 | 23 | PASS |
+| wire/tcp | 9 | 24 | 0 | 24 | PASS |
 | wire/udp | 8 | 16 | 0 | 16 | PASS |
 | wire/icmp | 5 | 6 | 0 | 6 | PASS |
 | wire/ipsec_esp | 6 | 6 | 0 | 6 | PASS |
@@ -49,8 +49,8 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/sixlowpan_frag | 0 | 9 | 0 | 9 | PASS |
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
-| stack | 2 | 121 | 0 | 121 | PASS |
-| **Total** | | **853** | **8** | **853** | **PASS** |
+| stack | 2 | 123 | 0 | 123 | PASS |
+| **Total** | | **856** | **8** | **856** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -126,6 +126,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/tcp.rs:test_parse_options | "parse TCP with MSS option" | PASS |
 | wire/tcp.rs:roundtrip | "TCP SYN roundtrip" | PASS |
 | (original) | "TCP checksum computation" | PASS |
+| (original) | "TCP IPv6 checksum verification" | PASS |
 | (original) | "SeqNumber wrapping add and sub" | PASS |
 | (original) | "SeqNumber signed comparison across wrap boundary" | PASS |
 | (original) | "SeqNumber diff" | PASS |
@@ -999,6 +1000,7 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "burst size limits frames per poll cycle" | PASS |
 | (original) | "DeviceCapabilities defaults enable all checksums" | PASS |
 | (original) | "ChecksumMode shouldVerifyRx and shouldComputeTx" | PASS |
+| (original) | "stack TCP ingress rejects bad checksum" | PASS |
 | (original) | "stack v6 echo request produces reply" | PASS |
 | (original) | "stack v6 drops multicast source" | PASS |
 | (original) | "stack v6 drops unknown destination" | PASS |
@@ -1042,6 +1044,7 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "stack v6 UDP socket receives datagram" | PASS |
 | (original) | "stack v6 UDP socket rejects zero checksum" | PASS |
 | (original) | "stack v6 TCP socket receives SYN, replies SYN-ACK" | PASS |
+| (original) | "stack v6 TCP ingress rejects bad checksum" | PASS |
 | (original) | "stack v6 ICMPv6 socket receives echo reply" | PASS |
 | (original) | "stack v6 raw socket receives IP payload" | PASS |
 | (original) | "stack v6 raw socket suppresses ICMPv6 param problem" | PASS |

@@ -283,7 +283,7 @@ fn writePanId(buf: []u8, offset: *usize, pan_id: ?u16) void {
     }
 }
 
-pub fn parse(data: []const u8) error{ Truncated, Malformed }!Repr {
+pub fn parse(data: []const u8) error{ Truncated, Malformed, UnsupportedSecurity }!Repr {
     if (data.len < 3) return error.Truncated;
     if (data.len > MAX_FRAME_LEN) return error.Malformed;
 
@@ -291,6 +291,8 @@ pub fn parse(data: []const u8) error{ Truncated, Malformed }!Repr {
 
     const frame_type: FrameType = @enumFromInt(@as(u3, @truncate(fc & 0b111)));
     const security: bool = (fc >> 3) & 1 == 1;
+    if (security) return error.UnsupportedSecurity;
+
     const frame_pending: bool = (fc >> 4) & 1 == 1;
     const ack_request: bool = (fc >> 5) & 1 == 1;
     const pan_id_compression: bool = (fc >> 6) & 1 == 1;
@@ -319,11 +321,6 @@ pub fn parse(data: []const u8) error{ Truncated, Malformed }!Repr {
     const dst_addr = try readAddress(data, &offset, flags.dst_mode);
     const src_pan_id = try readPanId(data, &offset, flags.src_pan);
     const src_addr = try readAddress(data, &offset, flags.src_mode);
-
-    if (security) {
-        const sec_len = try securityHeaderLen(data, offset);
-        if (offset + sec_len > data.len) return error.Truncated;
-    }
 
     return .{
         .frame_type = frame_type,
@@ -381,16 +378,11 @@ pub fn emit(repr: Repr, buf: []u8) error{BufferTooSmall}!usize {
     return offset;
 }
 
-/// Returns the payload portion of a parsed frame (after all headers, including security).
-pub fn payloadSlice(data: []const u8) error{ Truncated, Malformed }![]const u8 {
+/// Returns the payload portion of a parsed frame.
+pub fn payloadSlice(data: []const u8) error{ Truncated, Malformed, UnsupportedSecurity }![]const u8 {
     const repr = try parse(data);
 
-    var offset: usize = bufferLen(repr);
-
-    if (repr.security) {
-        const sec_len = try securityHeaderLen(data, offset);
-        offset += sec_len;
-    }
+    const offset: usize = bufferLen(repr);
 
     if (offset > data.len) return error.Truncated;
     return data[offset..];
@@ -480,8 +472,7 @@ test "parse zolertia remote" {
     try testing.expectEqualSlices(u8, &[_]u8{ 0x2b, 0x00, 0x00, 0x00 }, payload);
 }
 
-// [smoltcp:ieee802154.rs:security]
-test "parse frame with security" {
+test "reject frame with security" {
     const frame = [_]u8{
         0x69, 0xdc, // frame control
         0x32, // sequence number
@@ -495,24 +486,8 @@ test "parse frame with security" {
         0x90, 0xfe, 0x56, 0x66, 0xf7, 0x1c, 0x65, 0x9e,
         0xf9, 0x93, 0xc8, 0x34, 0x2e,
     };
-    const repr = try parse(&frame);
-    try testing.expectEqual(FrameType.data, repr.frame_type);
-    try testing.expectEqual(FrameVersion.ieee802154_2006, repr.frame_version);
-    try testing.expect(repr.security);
-    try testing.expect(!repr.frame_pending);
-    try testing.expect(repr.ack_request);
-    try testing.expect(repr.pan_id_compression);
-    try testing.expectEqual(@as(?u8, 0x32), repr.sequence_number);
-    try testing.expectEqual(@as(?u16, 0xabcd), repr.dst_pan_id);
-    try testing.expectEqual(
-        Address{ .extended = .{ 0x00, 0x12, 0x4b, 0x00, 0x06, 0x15, 0x9b, 0xbf } },
-        repr.dst_addr,
-    );
-    try testing.expectEqual(@as(?u16, null), repr.src_pan_id);
-    try testing.expectEqual(
-        Address{ .extended = .{ 0x00, 0x12, 0x4b, 0x00, 0x14, 0xb5, 0xd9, 0xc7 } },
-        repr.src_addr,
-    );
+    try testing.expectError(error.UnsupportedSecurity, parse(&frame));
+    try testing.expectError(error.UnsupportedSecurity, payloadSlice(&frame));
 }
 
 test "short addr roundtrip" {

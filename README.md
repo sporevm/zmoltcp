@@ -158,7 +158,7 @@ zig build test -- --summary all
 
 ## Integration Demos
 
-Fourteen end-to-end demos exercise the full stack API (sockets -> Stack poll
+Fifteen end-to-end demos exercise the full stack API (sockets -> Stack poll
 loop -> Device) with no manual packet construction. They serve as both
 functional validation and usage documentation.
 
@@ -180,6 +180,7 @@ zig build demo -- --summary all
 | IP medium | `examples/ip_medium.zig` | UDP echo over Medium::Ip -- no Ethernet, no ARP, raw IP point-to-point |
 | Fragmentation | `examples/fragmentation.zig` | 600B UDP over 576B MTU: IPv4 fragmentation on egress, reassembly on ingress |
 | Multi-socket | `examples/multi_socket.zig` | TCP + UDP + ICMP active simultaneously, proving protocol demux under load |
+| TCP forwarder gateway | `examples/tcp_forwarder_gateway.zig` | Gateway accepts a non-local IPv4 TCP SYN into a caller-owned socket and exchanges data |
 | Raw socket | `examples/raw_socket.zig` | Raw IP socket on protocol 253: bidirectional payload exchange |
 | Dual-stack | `examples/dual_stack.zig` | IPv4 TCP + IPv6 UDP running concurrently on same stacks |
 | DNS resolve | `examples/dns_resolve.zig` | DNS A-record resolution via DNS socket + mock UDP:53 server |

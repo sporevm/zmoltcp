@@ -56,19 +56,29 @@ pub fn parse(msg_type: u8, data: []const u8) error{ Truncated, Unrecognized }!Re
         0x82 => { // MLD Query
             if (data.len < 24) return error.Truncated;
             const sqrv = data[20];
+            const num_srcs = readU16(data[22..24]);
+            const needed = 24 + @as(usize, num_srcs) * 16;
+            if (data.len < needed) return error.Truncated;
             return .{ .query = .{
                 .max_resp_code = readU16(data[0..2]),
                 .mcast_addr = data[4..20].*,
                 .s_flag = (sqrv & 0x08) != 0,
                 .qrv = sqrv & 0x07,
                 .qqic = data[21],
-                .num_srcs = readU16(data[22..24]),
+                .num_srcs = num_srcs,
             } };
         },
         0x8F => { // MLDv2 Report
             if (data.len < 4) return error.Truncated;
+            const nr_records = readU16(data[2..4]);
+            var offset: usize = 4;
+            var i: u16 = 0;
+            while (i < nr_records) : (i += 1) {
+                const record = try parseAddressRecord(data[offset..]);
+                offset += addressRecordLen(record);
+            }
             return .{ .report = .{
-                .nr_mcast_addr_rcrds = readU16(data[2..4]),
+                .nr_mcast_addr_rcrds = nr_records,
             } };
         },
         else => return error.Unrecognized,
@@ -100,12 +110,14 @@ pub fn emit(repr: Repr, buf: []u8) error{BufferTooSmall}!usize {
 
 pub fn parseAddressRecord(data: []const u8) error{Truncated}!AddressRecordRepr {
     if (data.len < 20) return error.Truncated;
-    return .{
+    const record = AddressRecordRepr{
         .record_type = @enumFromInt(data[0]),
         .aux_data_len = data[1],
         .num_srcs = readU16(data[2..4]),
         .mcast_addr = data[4..20].*,
     };
+    if (data.len < addressRecordLen(record)) return error.Truncated;
+    return record;
 }
 
 pub fn addressRecordLen(record: AddressRecordRepr) usize {
@@ -138,7 +150,7 @@ test "parse MLD query" {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
         0x0a, // SQRV: s_flag=1(bit3), qrv=2(bits0-2) = 0b00001010
         0x12, // qqic
-        0x00, 0x01, // num_srcs=1
+        0x00, 0x00, // num_srcs=0
     };
     const repr = try parse(0x82, &data);
     const q = repr.query;
@@ -146,7 +158,7 @@ test "parse MLD query" {
     try testing.expect(q.s_flag);
     try testing.expectEqual(@as(u8, 2), q.qrv);
     try testing.expectEqual(@as(u8, 0x12), q.qqic);
-    try testing.expectEqual(@as(u16, 1), q.num_srcs);
+    try testing.expectEqual(@as(u16, 0), q.num_srcs);
     try testing.expectEqual(ipv6.LINK_LOCAL_ALL_NODES, q.mcast_addr);
 }
 
@@ -155,6 +167,11 @@ test "parse MLD report" {
     const data = [_]u8{
         0x00, 0x00, // reserved
         0x00, 0x01, // nr_mcast_addr_rcrds=1
+        0x01, 0x00, 0x00, 0x00, // ModeIsInclude, aux=0, num_srcs=0
+        0xff, 0x02, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
     };
     const repr = try parse(0x8F, &data);
     try testing.expectEqual(@as(u16, 1), repr.report.nr_mcast_addr_rcrds);
@@ -164,12 +181,34 @@ test "parse MLD unrecognized type" {
     try testing.expectError(error.Unrecognized, parse(0x01, &[_]u8{ 0, 0, 0, 0 }));
 }
 
+test "parse MLD rejects truncated variable fields" {
+    try testing.expectError(error.Truncated, parse(0x82, &[_]u8{
+        0x04, 0x00, 0x00, 0x00,
+        0xff, 0x02, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+        0x0a, 0x12, 0x00, 0x01,
+    }));
+    try testing.expectError(error.Truncated, parse(0x8F, &[_]u8{
+        0x00, 0x00,
+        0x00, 0x01,
+    }));
+    try testing.expectError(error.Truncated, parseAddressRecord(&[_]u8{
+        0x01, 0x00, 0x00, 0x01,
+        0xff, 0x02, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+    }));
+}
+
 test "MLD query roundtrip" {
     const original = [_]u8{
         0x04, 0x00, 0x00, 0x00,
         0xff, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-        0x0a, 0x12, 0x00, 0x01,
+        0x0a, 0x12, 0x00, 0x00,
     };
     const repr = try parse(0x82, &original);
     var buf: [24]u8 = undefined;
@@ -184,6 +223,9 @@ test "parse address record" {
         0x00, 0x01, // num_srcs=1
         // mcast_addr = ff02::1
         0xff, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+        // source = fe80::1
+        0xfe, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
     };
     const rec = try parseAddressRecord(&data);

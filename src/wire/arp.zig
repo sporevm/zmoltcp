@@ -28,7 +28,7 @@ pub const Repr = struct {
 };
 
 /// Parse an ARP packet from raw bytes (after Ethernet header).
-pub fn parse(data: []const u8) error{ Truncated, UnsupportedHardware, UnsupportedProtocol }!Repr {
+pub fn parse(data: []const u8) error{ Truncated, UnsupportedHardware, UnsupportedProtocol, UnsupportedOperation }!Repr {
     if (data.len < HEADER_LEN) return error.Truncated;
 
     // Hardware type must be Ethernet (1)
@@ -39,7 +39,12 @@ pub fn parse(data: []const u8) error{ Truncated, UnsupportedHardware, Unsupporte
     const proto_type: u16 = @as(u16, data[2]) << 8 | @as(u16, data[3]);
     if (proto_type != 0x0800) return error.UnsupportedProtocol;
 
+    // Address lengths must match the fixed Ethernet/IPv4 layout below.
+    if (data[4] != 6) return error.UnsupportedHardware;
+    if (data[5] != 4) return error.UnsupportedProtocol;
+
     const operation: u16 = @as(u16, data[6]) << 8 | @as(u16, data[7]);
+    if (operation != 1 and operation != 2) return error.UnsupportedOperation;
 
     return .{
         .operation = @enumFromInt(operation),
@@ -110,6 +115,24 @@ test "parse ARP unsupported hardware" {
     var bad = SAMPLE_ARP_REQUEST;
     bad[1] = 0x06; // not Ethernet
     try testing.expectError(error.UnsupportedHardware, parse(&bad));
+}
+
+test "parse ARP unsupported hardware length" {
+    var bad = SAMPLE_ARP_REQUEST;
+    bad[4] = 4; // Ethernet hardware addresses must be 6 bytes
+    try testing.expectError(error.UnsupportedHardware, parse(&bad));
+}
+
+test "parse ARP unsupported protocol length" {
+    var bad = SAMPLE_ARP_REQUEST;
+    bad[5] = 16; // IPv4 protocol addresses must be 4 bytes
+    try testing.expectError(error.UnsupportedProtocol, parse(&bad));
+}
+
+test "parse ARP unsupported operation" {
+    var bad = SAMPLE_ARP_REQUEST;
+    bad[7] = 3; // only request/reply are supported
+    try testing.expectError(error.UnsupportedOperation, parse(&bad));
 }
 
 // [smoltcp:wire/arp.rs:roundtrip]

@@ -449,7 +449,7 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
                     const udp_ingress = parseUdp4Ingress(ip_repr, ip_payload) orelse return;
                     if (self.routeToDhcpSockets(timestamp, ip_repr, udp_ingress)) return;
                     var handled = self.routeToUdpSockets(ip_repr, udp_ingress);
-                    if (!handled) handled = self.routeToDnsSockets(udp_ingress);
+                    if (!handled) handled = self.routeToDnsSockets(ip_repr.src_addr, udp_ingress);
                     if (self.iface.processUdp(ip_repr, udp_ingress.datagram, handled)) |response| {
                         self.emitResponse(response, device);
                     }
@@ -709,7 +709,7 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
                 .udp => {
                     const udp_ingress = parseUdp6Ingress(ip_repr, ip_payload) orelse return;
                     var handled = self.routeToUdpV6Sockets(ip_repr, udp_ingress);
-                    if (!handled) handled = self.routeToDnsV6Sockets(udp_ingress);
+                    if (!handled) handled = self.routeToDnsV6Sockets(ip_repr.src_addr, udp_ingress);
                     if (self.iface.processUdpV6(ip_repr, udp_ingress.datagram, handled)) |response| {
                         self.emitResponse(response, device);
                     }
@@ -876,14 +876,14 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             return false;
         }
 
-        fn routeToDnsSockets(self: *Self, udp_ingress: UdpIngress) bool {
+        fn routeToDnsSockets(self: *Self, src_ip: ipv4.Address, udp_ingress: UdpIngress) bool {
             if (comptime !has_dns4) return false;
 
             if (udp_ingress.wire_repr.src_port != dns_socket_mod.DNS_PORT and
                 udp_ingress.wire_repr.src_port != dns_socket_mod.MDNS_PORT) return false;
 
             for (self.sockets.dns4_sockets) |sock| {
-                sock.process(udp_ingress.wire_repr.dst_port, udp_ingress.payload);
+                sock.process(src_ip, udp_ingress.wire_repr.dst_port, udp_ingress.payload);
             }
             return true;
         }
@@ -993,14 +993,14 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             }
         }
 
-        fn routeToDnsV6Sockets(self: *Self, udp_ingress: UdpIngress) bool {
+        fn routeToDnsV6Sockets(self: *Self, src_ip: ipv6.Address, udp_ingress: UdpIngress) bool {
             if (comptime !has_dns6) return false;
 
             if (udp_ingress.wire_repr.src_port != dns_socket_mod.DNS_PORT and
                 udp_ingress.wire_repr.src_port != dns_socket_mod.MDNS_PORT) return false;
 
             for (self.sockets.dns6_sockets) |sock| {
-                sock.process(udp_ingress.wire_repr.dst_port, udp_ingress.payload);
+                sock.process(src_ip, udp_ingress.wire_repr.dst_port, udp_ingress.payload);
             }
             return true;
         }
@@ -3235,7 +3235,7 @@ test "stack DNS query dispatches via UDP" {
     @memset(@as([*]u8, @ptrCast(&S.slots))[0..@sizeOf(@TypeOf(S.slots))], 0);
     const servers = [_][4]u8{.{ 8, 8, 8, 8 }};
     var sock = DnsSock.init(&S.slots, &servers);
-    _ = try sock.startQuery("example.com", .a);
+    const handle = try sock.startQuery("example.com", .a);
 
     var sock_arr = [_]*DnsSock{&sock};
     var stack = DnsStack.init(LOCAL_HW, .{ .dns4_sockets = &sock_arr });
@@ -3257,7 +3257,9 @@ test "stack DNS query dispatches via UDP" {
 
     const udp_data = try ipv4.payloadSlice(ip_data);
     const udp_repr = try udp_wire.parse(udp_data);
-    try testing.expectEqual(@as(u16, 49152), udp_repr.src_port);
+    const pq = sock.queries[handle.index].state.?.pending;
+    try testing.expectEqual(pq.port, udp_repr.src_port);
+    try testing.expect(udp_repr.src_port >= 49152);
     try testing.expectEqual(@as(u16, 53), udp_repr.dst_port);
 }
 
@@ -3287,9 +3289,9 @@ test "stack DNS ingress delivers response" {
     // Dispatch query.
     _ = stack.poll(Instant.ZERO, &device);
     _ = device.dequeueTx();
+    const pq = sock.queries[handle.index].state.?.pending;
 
     // Build DNS A-record response.
-    const txid: u16 = 0xABCD;
     const answer_ip = [4]u8{ 93, 184, 216, 34 };
 
     // Encode "example.com" in wire format.
@@ -3298,8 +3300,8 @@ test "stack DNS ingress delivers response" {
     @memset(&resp_buf, 0);
 
     // DNS header.
-    resp_buf[0] = @truncate(txid >> 8);
-    resp_buf[1] = @truncate(txid);
+    resp_buf[0] = @truncate(pq.txid >> 8);
+    resp_buf[1] = @truncate(pq.txid);
     const resp_flags: u16 = dns_wire.Flags.RESPONSE | dns_wire.Flags.RECURSION_DESIRED | dns_wire.Flags.RECURSION_AVAILABLE;
     resp_buf[2] = @truncate(resp_flags >> 8);
     resp_buf[3] = @truncate(resp_flags);
@@ -3328,12 +3330,12 @@ test "stack DNS ingress delivers response" {
     @memcpy(resp_buf[pos..][0..4], &answer_ip);
     pos += 4;
 
-    // Wrap in UDP (53 -> 49152).
+    // Wrap in UDP (53 -> generated query port).
     var udp_resp: [600]u8 = undefined;
     const resp_udp_total: u16 = @intCast(udp_wire.HEADER_LEN + pos);
     const resp_udp_hdr = udp_wire.emit(.{
         .src_port = 53,
-        .dst_port = 49152,
+        .dst_port = pq.port,
         .length = resp_udp_total,
         .checksum = 0,
     }, &udp_resp) catch unreachable;

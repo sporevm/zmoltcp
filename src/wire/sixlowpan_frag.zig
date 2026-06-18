@@ -3,6 +3,7 @@
 // Reference: smoltcp src/wire/sixlowpan/frag.rs
 
 const checksum = @import("checksum.zig");
+const ipv6 = @import("ipv6.zig");
 const readU16 = checksum.readU16;
 const writeU16 = checksum.writeU16;
 
@@ -34,6 +35,7 @@ pub fn parse(data: []const u8) error{ Truncated, Malformed }!Repr {
     const dispatch = data[0] >> 3;
     const datagram_size = readU16(data[0..2]) & 0x7FF;
     const datagram_tag = readU16(data[2..4]);
+    if (datagram_size < ipv6.HEADER_LEN) return error.Malformed;
 
     if (dispatch == DISPATCH_FIRST_FRAGMENT) {
         return .{ .first_fragment = .{
@@ -147,6 +149,15 @@ test "truncated errors" {
 
 test "malformed dispatch" {
     try testing.expectError(error.Malformed, parse(&[_]u8{ 0x00, 0x00, 0x00, 0x00 }));
+}
+
+test "undersized datagram sizes are malformed" {
+    try testing.expectError(error.Malformed, parse(&[_]u8{ 0xc0, 0x27, 0xab, 0xcd }));
+    try testing.expectError(error.Malformed, parse(&[_]u8{ 0xe0, 0x27, 0xab, 0xcd, 0x00 }));
+    try testing.expectEqual(Repr{ .first_fragment = .{
+        .datagram_size = 40,
+        .datagram_tag = 0xabcd,
+    } }, try parse(&[_]u8{ 0xc0, 0x28, 0xab, 0xcd }));
 }
 
 test "bufferLen consistency" {

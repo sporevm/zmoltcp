@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 837 tests passing** (836 named + 1 root import test)
+**Total: 838 tests passing** (837 named + 1 root import test)
 
 ## Summary
 
@@ -46,11 +46,11 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | fragmentation | 3 | 16 | 0 | 16 | PASS |
 | wire/ieee802154 | 5 | 11 | 0 | 11 | PASS |
 | wire/sixlowpan | 6 | 20 | 0 | 20 | PASS |
-| wire/sixlowpan_frag | 0 | 8 | 0 | 8 | PASS |
+| wire/sixlowpan_frag | 0 | 9 | 0 | 9 | PASS |
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
 | stack | 2 | 114 | 0 | 114 | PASS |
-| **Total** | | **817** | **8** | **817** | **PASS** |
+| **Total** | | **818** | **8** | **818** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -377,6 +377,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | (original) | "payloadSlice subsequent fragment" | PASS |
 | (original) | "truncated errors" | PASS |
 | (original) | "malformed dispatch" | PASS |
+| (original) | "undersized datagram sizes are malformed" | PASS |
 | (original) | "bufferLen consistency" | PASS |
 | (original) | "emit buffer too small" | PASS |
 

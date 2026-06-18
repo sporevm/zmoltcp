@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 834 tests passing** (833 named + 1 root import test)
+**Total: 837 tests passing** (836 named + 1 root import test)
 
 ## Summary
 
@@ -10,7 +10,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 |--------|--------------|---------------|-----|---------|--------|
 | wire/checksum | 5 | 6 | 0 | 6 | PASS |
 | wire/ethernet | 5 | 5 | 0 | 5 | PASS |
-| wire/arp | 4 | 5 | 0 | 5 | PASS |
+| wire/arp | 4 | 8 | 0 | 8 | PASS |
 | wire/ip | 0 | 7 | 0 | 7 | PASS |
 | wire/ipv4 | 15 | 16 | 0 | 16 | PASS |
 | wire/tcp | 9 | 22 | 0 | 22 | PASS |
@@ -79,6 +79,9 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/arp.rs:test_parse | "parse ARP request" | PASS |
 | (original) | "parse ARP truncated" | PASS |
 | (original) | "parse ARP unsupported hardware" | PASS |
+| (original) | "parse ARP unsupported hardware length" | PASS |
+| (original) | "parse ARP unsupported protocol length" | PASS |
+| (original) | "parse ARP unsupported operation" | PASS |
 | wire/arp.rs:roundtrip | "ARP roundtrip" | PASS |
 | (original) | "emit ARP reply" | PASS |
 

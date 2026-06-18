@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 860 tests passing** (859 named + 1 root import test)
+**Total: 865 tests passing** (864 named + 1 root import test)
 
 ## Summary
 
@@ -25,7 +25,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | socket/tcp | 175 | 222 | 3 | 222 | PASS |
 | socket/udp | 16 | 17 | 0 | 17 | PASS |
 | wire/dhcp | 9 | 9 | 0 | 9 | PASS |
-| socket/dhcp | 11 | 11 | 0 | 11 | PASS |
+| socket/dhcp | 11 | 16 | 0 | 16 | PASS |
 | wire/dns | 7 | 8 | 0 | 8 | PASS |
 | socket/dns | 0 | 16 | 0 | 16 | PASS |
 | socket/icmp | 6 | 10 | 0 | 10 | PASS |
@@ -50,7 +50,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
 | stack | 2 | 121 | 0 | 121 | PASS |
-| **Total** | | **840** | **8** | **840** | **PASS** |
+| **Total** | | **845** | **8** | **845** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -828,14 +828,19 @@ were never actually run despite being listed here. The test module runs with
 | socket/dhcpv4.rs:test_bind | "bind" | PASS |
 | socket/dhcpv4.rs:test_bind_different_ports | "bind different ports" | PASS |
 | socket/dhcpv4.rs:test_discover_retransmit | "discover retransmit" | PASS |
+| (original) | "discover dispatch rotates transaction IDs" | PASS |
 | socket/dhcpv4.rs:test_request_retransmit | "request retransmit" | PASS |
 | socket/dhcpv4.rs:test_request_timeout | "request timeout" | PASS |
 | socket/dhcpv4.rs:test_request_nak | "request nak" | PASS |
+| (original) | "request rejects ACK from mismatched server" | PASS |
+| (original) | "request rejects NAK from mismatched server" | PASS |
 | socket/dhcpv4.rs:test_renew | "renew" | PASS |
+| (original) | "renew rejects ACK from mismatched server" | PASS |
 | socket/dhcpv4.rs:test_renew_rebind_retransmit | "renew rebind retransmit" | PASS |
 | socket/dhcpv4.rs:test_renew_rebind_timeout | "renew rebind timeout" | PASS |
 | socket/dhcpv4.rs:test_min_max_renew_timeout | "min max renew timeout" | PASS |
 | socket/dhcpv4.rs:test_renew_nak | "renew nak" | PASS |
+| (original) | "renew rejects NAK from mismatched server" | PASS |
 
 ### socket/dns.zig
 | smoltcp Reference | zmoltcp Test | Status |

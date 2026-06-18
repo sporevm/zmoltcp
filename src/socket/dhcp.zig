@@ -106,6 +106,7 @@ pub const Socket = struct {
     state: ClientState,
     config_changed: bool,
     transaction_id: u32,
+    transaction_rng: std.Random.DefaultPrng,
     max_lease_duration: ?Duration,
     retry_config: RetryConfig,
     ignore_naks: bool,
@@ -117,10 +118,20 @@ pub const Socket = struct {
     const BCAST_IP = [4]u8{ 255, 255, 255, 255 };
 
     pub fn init(hardware_address: [6]u8) Socket {
+        return initWithTransactionSeed(hardware_address, defaultTransactionSeed(hardware_address));
+    }
+
+    pub fn initWithRandom(hardware_address: [6]u8, random: std.Random) Socket {
+        return initWithTransactionSeed(hardware_address, random.int(u64));
+    }
+
+    pub fn initWithTransactionSeed(hardware_address: [6]u8, seed: u64) Socket {
+        var rng = std.Random.DefaultPrng.init(seed);
         return .{
             .state = .{ .discovering = .{ .retry_at = Instant.fromMillis(0) } },
             .config_changed = true,
-            .transaction_id = 1,
+            .transaction_id = nextTransactionIdFrom(&rng),
+            .transaction_rng = rng,
             .max_lease_duration = null,
             .retry_config = .{},
             .ignore_naks = false,
@@ -128,6 +139,15 @@ pub const Socket = struct {
             .client_port = wire.CLIENT_PORT,
             .hardware_address = hardware_address,
         };
+    }
+
+    pub fn setTransactionIdSeed(self: *Socket, seed: u64) void {
+        self.transaction_rng.seed(seed);
+        self.transaction_id = nextTransactionIdFrom(&self.transaction_rng);
+    }
+
+    pub fn setTransactionIdRandom(self: *Socket, random: std.Random) void {
+        self.setTransactionIdSeed(random.int(u64));
     }
 
     pub fn setPorts(self: *Socket, server_port: u16, client_port: u16) void {
@@ -189,6 +209,7 @@ pub const Socket = struct {
                 } };
             },
             .requesting => |state| {
+                if (!serverMatches(src_ip, server_identifier, state.server)) return;
                 switch (dhcp_repr.message_type) {
                     .ack => {
                         if (parseAck(now, dhcp_repr, self.max_lease_duration, state.server)) |result| {
@@ -209,9 +230,17 @@ pub const Socket = struct {
                 }
             },
             .renewing => |*state| {
+                const response_server = ServerInfo{
+                    .address = src_ip,
+                    .identifier = server_identifier,
+                };
+                if (!state.rebinding and !response_server.eql(state.config.server)) return;
+                if (state.rebinding and !std.mem.eql(u8, &src_ip, &server_identifier)) return;
+                const accepted_server = if (state.rebinding) response_server else state.config.server;
+
                 switch (dhcp_repr.message_type) {
                     .ack => {
-                        if (parseAck(now, dhcp_repr, self.max_lease_duration, state.config.server)) |result| {
+                        if (parseAck(now, dhcp_repr, self.max_lease_duration, accepted_server)) |result| {
                             const changed = !state.config.eql(&result.config);
                             state.renew_at = result.renew_at;
                             state.rebind_at = result.rebind_at;
@@ -263,7 +292,7 @@ pub const Socket = struct {
             .discovering => |*state| {
                 if (now.lessThan(state.retry_at)) return null;
 
-                const next_txid = testTransactionId();
+                const next_txid = self.nextTransactionId();
                 dhcp_repr.transaction_id = next_txid;
 
                 state.retry_at = now.add(self.retry_config.discover_timeout);
@@ -308,7 +337,7 @@ pub const Socket = struct {
                 dhcp_repr.message_type = .request;
                 dhcp_repr.client_ip = state.config.address;
 
-                const next_txid = testTransactionId();
+                const next_txid = self.nextTransactionId();
                 dhcp_repr.transaction_id = next_txid;
 
                 if (state.rebinding) {
@@ -351,6 +380,31 @@ pub const Socket = struct {
         };
     }
 
+    fn nextTransactionId(self: *Socket) u32 {
+        return nextTransactionIdFrom(&self.transaction_rng);
+    }
+
+    fn nextTransactionIdFrom(rng: *std.Random.DefaultPrng) u32 {
+        const id = rng.random().int(u32);
+        return if (id == 0) 1 else id;
+    }
+
+    fn defaultTransactionSeed(hardware_address: [6]u8) u64 {
+        var stack_marker: u8 = 0;
+        const stack_addr = @intFromPtr(&stack_marker);
+
+        var hasher = std.hash.Wyhash.init(0xa0761d6478bd642f);
+        hasher.update(&hardware_address);
+        hasher.update(std.mem.asBytes(&stack_addr));
+        const seed = hasher.final();
+        return if (seed == 0) 0xe7037ed1a0b428db else seed;
+    }
+
+    fn serverMatches(src_ip: [4]u8, server_identifier: [4]u8, expected: ServerInfo) bool {
+        return std.mem.eql(u8, &src_ip, &expected.address) and
+            std.mem.eql(u8, &server_identifier, &expected.identifier);
+    }
+
     fn configChanged(self: *Socket) void {
         self.config_changed = true;
     }
@@ -367,9 +421,6 @@ pub const Socket = struct {
         return if (a.lessThan(b)) a else b;
     }
 
-    fn testTransactionId() u32 {
-        return 0x12345678;
-    }
 };
 
 const ParseAckResult = struct {
@@ -485,6 +536,7 @@ const DNS_IP_2 = [4]u8{ 1, 1, 1, 2 };
 const DNS_IP_3 = [4]u8{ 1, 1, 1, 3 };
 const MASK_24 = [4]u8{ 255, 255, 255, 0 };
 const MY_MAC = [6]u8{ 0x02, 0x02, 0x02, 0x02, 0x02, 0x02 };
+const ATTACKER_IP = [4]u8{ 192, 168, 1, 200 };
 const T_IP_ZERO = [4]u8{ 0, 0, 0, 0 };
 const T_IP_BCAST = [4]u8{ 255, 255, 255, 255 };
 
@@ -586,7 +638,7 @@ fn dhcpRenew() wire.Repr {
 }
 
 fn createSocket() Socket {
-    var s = Socket.init(MY_MAC);
+    var s = Socket.initWithTransactionSeed(MY_MAC, 0x1234_5678_9abc_def0);
     const ev = s.poll();
     std.debug.assert(ev != null and ev.? == .deconfigured);
     return s;
@@ -622,10 +674,12 @@ fn createSocketBound() Socket {
 }
 
 fn send(s: *Socket, timestamp: Instant, repr: wire.Repr) void {
-    s.process(timestamp, SERVER_IP, repr);
+    sendFrom(s, timestamp, SERVER_IP, repr);
 }
 
-fn sendFrom(s: *Socket, timestamp: Instant, src_ip: [4]u8, repr: wire.Repr) void {
+fn sendFrom(s: *Socket, timestamp: Instant, src_ip: [4]u8, repr_in: wire.Repr) void {
+    var repr = repr_in;
+    repr.transaction_id = s.transaction_id;
     s.process(timestamp, src_ip, repr);
 }
 
@@ -783,6 +837,17 @@ test "discover retransmit" {
     try expectRecvRequest(&s, Instant.fromMillis(20_000));
 }
 
+test "discover dispatch rotates transaction IDs" {
+    var s = createSocket();
+
+    const first = recv(&s, Instant.fromMillis(0)) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(first.dhcp_repr.transaction_id, s.transaction_id);
+
+    const second = recv(&s, Instant.fromMillis(10_000)) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(second.dhcp_repr.transaction_id, s.transaction_id);
+    try testing.expect(first.dhcp_repr.transaction_id != second.dhcp_repr.transaction_id);
+}
+
 // [smoltcp:socket/dhcpv4.rs:test_request_retransmit]
 test "request retransmit" {
     var s = createSocket();
@@ -839,6 +904,53 @@ test "request nak" {
     try expectRecvDiscover(&s, Instant.fromMillis(0));
 }
 
+test "request rejects ACK from mismatched server" {
+    var s = createSocket();
+
+    try expectRecvDiscover(&s, Instant.fromMillis(0));
+    send(&s, Instant.fromMillis(0), dhcpOffer());
+    try expectRecvRequest(&s, Instant.fromMillis(0));
+
+    var forged = dhcpAck();
+    forged.server_ip = ATTACKER_IP;
+    forged.server_identifier = ATTACKER_IP;
+    forged.router = ATTACKER_IP;
+    sendFrom(&s, Instant.fromMillis(0), ATTACKER_IP, forged);
+
+    try testing.expect(s.poll() == null);
+    switch (s.state) {
+        .requesting => {},
+        else => return error.TestExpectedEqual,
+    }
+
+    send(&s, Instant.fromMillis(0), dhcpAck());
+    switch (s.poll() orelse return error.TestExpectedEqual) {
+        .configured => |config| try testing.expectEqualSlices(u8, &SERVER_IP, &(config.router orelse return error.TestExpectedEqual)),
+        .deconfigured => return error.TestExpectedEqual,
+    }
+}
+
+test "request rejects NAK from mismatched server" {
+    var s = createSocket();
+
+    try expectRecvDiscover(&s, Instant.fromMillis(0));
+    send(&s, Instant.fromMillis(0), dhcpOffer());
+    try expectRecvRequest(&s, Instant.fromMillis(0));
+
+    var forged = dhcpNak();
+    forged.server_ip = ATTACKER_IP;
+    forged.server_identifier = ATTACKER_IP;
+    sendFrom(&s, Instant.fromMillis(0), ATTACKER_IP, forged);
+
+    switch (s.state) {
+        .requesting => {},
+        else => return error.TestExpectedEqual,
+    }
+
+    send(&s, Instant.fromMillis(0), dhcpNak());
+    try expectRecvDiscover(&s, Instant.fromMillis(0));
+}
+
 // [smoltcp:socket/dhcpv4.rs:test_renew]
 test "renew" {
     var s = createSocketBound();
@@ -864,6 +976,33 @@ test "renew" {
             try testing.expect(r.renew_at.eql(Instant.fromSecs(500 + 500)));
             try testing.expect(r.expires_at.eql(Instant.fromSecs(500 + 1000)));
         },
+        else => return error.TestExpectedEqual,
+    }
+}
+
+test "renew rejects ACK from mismatched server" {
+    var s = createSocketBound();
+
+    try expectRecvRenew(&s, Instant.fromMillis(500_000));
+
+    var forged = dhcpAck();
+    forged.server_ip = ATTACKER_IP;
+    forged.server_identifier = ATTACKER_IP;
+    forged.router = ATTACKER_IP;
+    sendFrom(&s, Instant.fromMillis(500_000), ATTACKER_IP, forged);
+
+    try testing.expect(s.poll() == null);
+    switch (s.state) {
+        .renewing => |r| {
+            try testing.expectEqualSlices(u8, &SERVER_IP, &(r.config.router orelse return error.TestExpectedEqual));
+            try testing.expect(r.expires_at.eql(Instant.fromSecs(1000)));
+        },
+        else => return error.TestExpectedEqual,
+    }
+
+    send(&s, Instant.fromMillis(500_000), dhcpAck());
+    switch (s.state) {
+        .renewing => |r| try testing.expect(r.expires_at.eql(Instant.fromSecs(500 + 1000))),
         else => return error.TestExpectedEqual,
     }
 }
@@ -955,6 +1094,25 @@ test "renew nak" {
     var s = createSocketBound();
 
     try expectRecvRenew(&s, Instant.fromMillis(500_000));
+    send(&s, Instant.fromMillis(500_000), dhcpNak());
+    try expectRecvDiscover(&s, Instant.fromMillis(500_000));
+}
+
+test "renew rejects NAK from mismatched server" {
+    var s = createSocketBound();
+
+    try expectRecvRenew(&s, Instant.fromMillis(500_000));
+
+    var forged = dhcpNak();
+    forged.server_ip = ATTACKER_IP;
+    forged.server_identifier = ATTACKER_IP;
+    sendFrom(&s, Instant.fromMillis(500_000), ATTACKER_IP, forged);
+
+    switch (s.state) {
+        .renewing => {},
+        else => return error.TestExpectedEqual,
+    }
+
     send(&s, Instant.fromMillis(500_000), dhcpNak());
     try expectRecvDiscover(&s, Instant.fromMillis(500_000));
 }

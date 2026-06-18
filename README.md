@@ -195,7 +195,7 @@ Add zmoltcp as a Zig dependency in your `build.zig.zon`:
 ```zig
 .dependencies = .{
     .zmoltcp = .{
-        .url = "https://github.com/hotschmoe/zmoltcp/archive/<commit>.tar.gz",
+        .url = "https://github.com/hotschmoe/zmoltcp/archive/refs/tags/v<version>.tar.gz",
         .hash = "...",
     },
 },

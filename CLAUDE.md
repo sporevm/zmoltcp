@@ -149,15 +149,15 @@ Zig version: 0.16.0
 
 ## Release Flow
 
-`.github/workflows/release.yml` cuts a GitHub release on every push to
-`master`. It reads `.version` from `build.zig.zon`, fails if a tag
-`v<version>` already exists, otherwise creates the release with
-auto-generated notes. Consumers pin to release tags rather than commit shas.
+`.github/workflows/release.yml` runs after pushes to `master`. It tests the
+tree, reads `.version` from `build.zig.zon`, and creates `v<version>` with
+auto-generated notes only when that tag does not already exist. If the tag is
+already present, the workflow exits successfully without creating a release.
 
-**PRs targeting `master` MUST bump `.version` in `build.zig.zon`.** This is
-enforced by the `version-check` job in `.github/workflows/ci.yml`, gated to
-`pull_request` events. Pushes directly to master and PRs to other branches
-(e.g. `dev-hotschmoe`) do NOT require a bump.
+Ordinary PRs targeting `master` do NOT bump `.version` in `build.zig.zon`.
+Release PRs are the only PRs that change `.version`; merging a release PR to
+`master` lets the release workflow publish the matching tag. Consumers pin to
+release tags rather than commit shas.
 
 ## Architecture
 

@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 865 tests passing** (864 named + 1 root import test)
+**Total: 868 tests passing** (867 named + 1 root import test)
 
 ## Summary
 
@@ -27,7 +27,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/dhcp | 9 | 9 | 0 | 9 | PASS |
 | socket/dhcp | 11 | 16 | 0 | 16 | PASS |
 | wire/dns | 7 | 8 | 0 | 8 | PASS |
-| socket/dns | 0 | 16 | 0 | 16 | PASS |
+| socket/dns | 0 | 19 | 0 | 19 | PASS |
 | socket/icmp | 6 | 10 | 0 | 10 | PASS |
 | socket/raw | 5 | 11 | 0 | 11 | PASS |
 | wire/igmp | 4 | 8 | 0 | 8 | PASS |
@@ -50,7 +50,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
 | stack | 2 | 121 | 0 | 121 | PASS |
-| **Total** | | **845** | **8** | **845** | **PASS** |
+| **Total** | | **848** | **8** | **848** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -850,11 +850,14 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "start query rejects too-long label" | PASS |
 | (original) | "start query no free slot" | PASS |
 | (original) | "dispatch emits query packet" | PASS |
+| (original) | "start query rotates transaction IDs and source ports" | PASS |
 | (original) | "dispatch retransmit with backoff" | PASS |
 | (original) | "dispatch timeout tries next server" | PASS |
 | (original) | "dispatch all servers exhausted" | PASS |
 | (original) | "process A response" | PASS |
+| (original) | "process ignores response from unexpected server" | PASS |
 | (original) | "process NXDomain" | PASS |
+| (original) | "process NXDomain validates question before failure" | PASS |
 | (original) | "process CNAME then A" | PASS |
 | (original) | "cancel query frees slot" | PASS |
 

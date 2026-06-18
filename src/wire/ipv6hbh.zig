@@ -31,16 +31,18 @@ pub fn mldv2RouterAlert() Repr {
     return repr;
 }
 
-pub fn parse(data: []const u8) Repr {
+pub fn parse(data: []const u8) error{ Truncated, BadOption, TooManyOptions }!Repr {
     var repr: Repr = .{
         .options = .{null} ** MAX_OPTIONS,
         .count = 0,
     };
-    var iter = ipv6option.iterator(data);
-    while (iter.next()) |opt| {
-        if (repr.count >= MAX_OPTIONS) break;
+    var pos: usize = 0;
+    while (pos < data.len) {
+        if (repr.count >= MAX_OPTIONS) return error.TooManyOptions;
+        const opt = try ipv6option.parse(data[pos..]);
         repr.options[repr.count] = opt;
         repr.count += 1;
+        pos += opt.bufferLen();
     }
     return repr;
 }
@@ -64,7 +66,7 @@ const testing = @import("std").testing;
 // [smoltcp:wire/ipv6hopbyhop.rs:test_hbh_deconstruct]
 test "parse HBH with PadN(4)" {
     const data = [_]u8{ 0x01, 0x04, 0x00, 0x00, 0x00, 0x00 };
-    const repr = parse(&data);
+    const repr = try parse(&data);
     try testing.expectEqual(@as(u8, 1), repr.count);
     try testing.expectEqual(@as(u8, 4), repr.options[0].?.padn);
 }
@@ -75,7 +77,7 @@ test "parse HBH with multiple options" {
         0x05, 0x02, 0x00, 0x00, // RouterAlert(MLD)
         0x01, 0x01, 0x00, // PadN(1)
     };
-    const repr = parse(&data);
+    const repr = try parse(&data);
     try testing.expectEqual(@as(u8, 3), repr.count);
     try testing.expect(repr.options[0].? == .pad1);
     try testing.expectEqual(ipv6option.RouterAlert.multicast_listener_discovery, repr.options[1].?.router_alert);
@@ -90,4 +92,13 @@ test "mldv2RouterAlert preset" {
     var buf: [4]u8 = undefined;
     _ = try emit(repr, &buf);
     try testing.expectEqualSlices(u8, &[_]u8{ 0x05, 0x02, 0x00, 0x00 }, &buf);
+}
+
+test "parse HBH rejects malformed option tails" {
+    try testing.expectError(error.Truncated, parse(&[_]u8{ 0x00, 0x01 }));
+    try testing.expectError(error.BadOption, parse(&[_]u8{ 0x00, 0x05, 0x01, 0x00 }));
+    try testing.expectError(error.TooManyOptions, parse(&[_]u8{
+        0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+    }));
 }

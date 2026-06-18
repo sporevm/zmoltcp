@@ -700,9 +700,10 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
 
             switch (next_header) {
                 .icmpv6 => {
+                    const icmpv6_repr = icmpv6.parse(ip_payload, ip_repr.src_addr, ip_repr.dst_addr) catch return;
                     self.routeToIcmpV6Sockets(ip_repr, ip_payload);
-                    self.processMldFromIcmpv6(ip_repr, ip_payload);
-                    self.processRaForSlaac(ip_repr, ip_payload);
+                    self.processMldFromIcmpv6(ip_repr, icmpv6_repr);
+                    self.processRaForSlaac(ip_repr, icmpv6_repr);
                     if (self.iface.processIcmpv6(ip_repr, ip_payload, is_multicast)) |response| {
                         self.emitResponse(response, device);
                     }
@@ -1542,13 +1543,11 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             }
         }
 
-        fn processMldFromIcmpv6(self: *Self, ip_repr: ipv6.Repr, icmp_data: []const u8) void {
-            if (icmp_data.len < icmpv6.HEADER_LEN) return;
-            const msg_type = icmp_data[0];
-            if (msg_type != 0x82) return; // Only MLD query
-            const mld_data = icmp_data[icmpv6.HEADER_LEN..];
-            const mld_repr = mld.parse(msg_type, mld_data) catch return;
-            self.iface.processMldQuery(ip_repr, mld_repr);
+        fn processMldFromIcmpv6(self: *Self, ip_repr: ipv6.Repr, icmpv6_repr: icmpv6.Repr) void {
+            switch (icmpv6_repr) {
+                .mld => |mld_repr| self.iface.processMldQuery(ip_repr, mld_repr),
+                else => {},
+            }
         }
 
         fn emitMldReport(self: *Self, group_addr: ipv6.Address, record_type: mld.RecordType, device: *Device) void {
@@ -1642,13 +1641,10 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             }
         }
 
-        fn processRaForSlaac(self: *Self, ip_repr: ipv6.Repr, icmp_data: []const u8) void {
+        fn processRaForSlaac(self: *Self, ip_repr: ipv6.Repr, icmpv6_repr: icmpv6.Repr) void {
             if (self.iface.slaac == null) return;
             if (ip_repr.hop_limit != 255) return;
-            if (icmp_data.len < icmpv6.HEADER_LEN) return;
-            if (icmp_data[0] != ndisc.ROUTER_ADVERT) return;
 
-            const icmpv6_repr = icmpv6.parse(icmp_data, ip_repr.src_addr, ip_repr.dst_addr) catch return;
             switch (icmpv6_repr) {
                 .ndisc => |nd| {
                     self.iface.processRouterAdvertisement(ip_repr, nd);
@@ -5079,6 +5075,38 @@ test "MLD specific query triggers report for one group" {
     const result = try verifyMldReport(tx_frame);
     try testing.expectEqual(group1, result.mcast_addr);
     // No more reports
+    try testing.expectEqual(@as(?[]const u8, null), device.dequeueTx());
+}
+
+test "MLD query with bad ICMPv6 checksum is ignored" {
+    var device = TestDevice.init();
+    var stack = testStackV6();
+
+    const group: ipv6.Address = .{ 0xFF, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x50 };
+    _ = stack.iface.joinMulticastGroupV6(group);
+    _ = stack.poll(Instant.ZERO, &device);
+    while (device.dequeueTx()) |_| {}
+
+    const query_src: ipv6.Address = .{ 0xFE, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01 };
+    const mld_query = mld.Repr{ .query = .{
+        .max_resp_code = 1000,
+        .mcast_addr = group,
+        .s_flag = false,
+        .qrv = 2,
+        .qqic = 125,
+        .num_srcs = 0,
+    } };
+
+    var icmpv6_buf: [128]u8 = undefined;
+    const icmpv6_len = icmpv6.emit(.{ .mld = mld_query }, query_src, group, &icmpv6_buf) catch unreachable;
+    icmpv6_buf[2] ^= 0x01;
+
+    var frame_buf: [512]u8 = undefined;
+    const frame = buildIpv6FrameFrom(&frame_buf, query_src, group, .icmpv6, 1, icmpv6_buf[0..icmpv6_len]);
+    device.enqueueRx(frame);
+
+    _ = stack.poll(Instant.ZERO, &device);
+
     try testing.expectEqual(@as(?[]const u8, null), device.dequeueTx());
 }
 

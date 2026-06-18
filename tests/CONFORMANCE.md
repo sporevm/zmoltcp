@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 876 tests passing** (875 named + 1 root import test)
+**Total: 877 tests passing** (876 named + 1 root import test)
 
 ## Summary
 
@@ -49,8 +49,8 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/sixlowpan_frag | 0 | 9 | 0 | 9 | PASS |
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
-| stack | 2 | 123 | 0 | 123 | PASS |
-| **Total** | | **856** | **8** | **856** | **PASS** |
+| stack | 2 | 124 | 0 | 124 | PASS |
+| **Total** | | **857** | **8** | **857** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -1021,6 +1021,7 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "MLD leave report on group leave" | PASS |
 | (original) | "MLD general query triggers reports for all groups" | PASS |
 | (original) | "MLD specific query triggers report for one group" | PASS |
+| (original) | "MLD query with bad ICMPv6 checksum is ignored" | PASS |
 | (original) | "MLD report has HBH Router Alert header" | PASS |
 | (original) | "MLD report ICMPv6 checksum correct" | PASS |
 | (original) | "enableSlaac configures link-local address from MAC" | PASS |

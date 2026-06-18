@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 844 tests passing** (843 named + 1 root import test)
+**Total: 845 tests passing** (844 named + 1 root import test)
 
 ## Summary
 
@@ -35,7 +35,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/ipv6option | 7 | 7 | 0 | 7 | PASS |
 | wire/ipv6ext_header | 3 | 6 | 0 | 6 | PASS |
 | wire/ipv6fragment | 3 | 4 | 0 | 4 | PASS |
-| wire/ipv6routing | 3 | 4 | 0 | 4 | PASS |
+| wire/ipv6routing | 3 | 5 | 0 | 5 | PASS |
 | wire/ipv6hbh | 2 | 4 | 0 | 4 | PASS |
 | wire/ndiscoption | 5 | 9 | 0 | 9 | PASS |
 | wire/ndisc | 2 | 5 | 0 | 5 | PASS |
@@ -50,7 +50,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
 | stack | 2 | 114 | 0 | 114 | PASS |
-| **Total** | | **824** | **8** | **824** | **PASS** |
+| **Total** | | **825** | **8** | **825** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -280,6 +280,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/ipv6routing.rs:test_construct_type2 | "Type2 roundtrip" | PASS |
 | wire/ipv6routing.rs:test_deconstruct_rpl_elided | "parse RPL elided" | PASS |
 | (original) | "unrecognized routing type" | PASS |
+| (original) | "RPL emit rejects non-nibble fields" | PASS |
 
 ### wire/ipv6hbh.zig
 | smoltcp Reference | zmoltcp Test | Status |

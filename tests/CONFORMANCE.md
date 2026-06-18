@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 839 tests passing** (838 named + 1 root import test)
+**Total: 840 tests passing** (839 named + 1 root import test)
 
 ## Summary
 
@@ -36,7 +36,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/ipv6ext_header | 3 | 5 | 0 | 5 | PASS |
 | wire/ipv6fragment | 3 | 4 | 0 | 4 | PASS |
 | wire/ipv6routing | 3 | 4 | 0 | 4 | PASS |
-| wire/ipv6hbh | 2 | 3 | 0 | 3 | PASS |
+| wire/ipv6hbh | 2 | 4 | 0 | 4 | PASS |
 | wire/ndiscoption | 5 | 8 | 0 | 8 | PASS |
 | wire/ndisc | 2 | 4 | 0 | 4 | PASS |
 | wire/mld | 2 | 6 | 0 | 6 | PASS |
@@ -50,7 +50,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
 | stack | 2 | 114 | 0 | 114 | PASS |
-| **Total** | | **819** | **8** | **819** | **PASS** |
+| **Total** | | **820** | **8** | **820** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -286,6 +286,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/ipv6hopbyhop.rs:test_hbh_deconstruct | "parse HBH with PadN(4)" | PASS |
 | (original) | "parse HBH with multiple options" | PASS |
 | (original) | "mldv2RouterAlert preset" | PASS |
+| (original) | "parse HBH rejects malformed option tails" | PASS |
 
 ### wire/ndiscoption.zig
 | smoltcp Reference | zmoltcp Test | Status |

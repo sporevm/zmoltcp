@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 868 tests passing** (867 named + 1 root import test)
+**Total: 871 tests passing** (870 named + 1 root import test)
 
 ## Summary
 
@@ -26,8 +26,8 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | socket/udp | 16 | 17 | 0 | 17 | PASS |
 | wire/dhcp | 9 | 9 | 0 | 9 | PASS |
 | socket/dhcp | 11 | 16 | 0 | 16 | PASS |
-| wire/dns | 7 | 8 | 0 | 8 | PASS |
-| socket/dns | 0 | 19 | 0 | 19 | PASS |
+| wire/dns | 7 | 9 | 0 | 9 | PASS |
+| socket/dns | 0 | 21 | 0 | 21 | PASS |
 | socket/icmp | 6 | 10 | 0 | 10 | PASS |
 | socket/raw | 5 | 11 | 0 | 11 | PASS |
 | wire/igmp | 4 | 8 | 0 | 8 | PASS |
@@ -50,7 +50,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
 | stack | 2 | 121 | 0 | 121 | PASS |
-| **Total** | | **848** | **8** | **848** | **PASS** |
+| **Total** | | **851** | **8** | **851** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -215,6 +215,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | (original) | "parse name rejects out-of-range start" | PASS |
 | wire/dns.rs:test_parse_request | "parse request" | PASS |
 | wire/dns.rs:test_parse_response | "parse response single A" | PASS |
+| (original) | "parse response single AAAA" | PASS |
 | wire/dns.rs:test_parse_response_multiple_a | "parse response multiple A" | PASS |
 | wire/dns.rs:test_parse_response_cname | "parse response CNAME" | PASS |
 | wire/dns.rs:test_parse_response_nxdomain | "parse response NXDomain" | PASS |
@@ -855,6 +856,8 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "dispatch timeout tries next server" | PASS |
 | (original) | "dispatch all servers exhausted" | PASS |
 | (original) | "process A response" | PASS |
+| (original) | "process AAAA response for IPv6 socket" | PASS |
+| (original) | "IPv6 DNS socket ignores A answers" | PASS |
 | (original) | "process ignores response from unexpected server" | PASS |
 | (original) | "process NXDomain" | PASS |
 | (original) | "process NXDomain validates question before failure" | PASS |

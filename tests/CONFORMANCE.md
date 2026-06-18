@@ -347,7 +347,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/ieee802154.rs:extended_addr | "parse extended addresses" | PASS |
 | wire/ieee802154.rs:short_addr | "parse short addresses" | PASS |
 | wire/ieee802154.rs:zolertia_remote | "parse zolertia remote" | PASS |
-| wire/ieee802154.rs:security | "parse frame with security" | PASS |
+| (security hardening) | "reject frame with security" | PASS |
 | (original) | "short addr roundtrip" | PASS |
 | (original) | "extended addr roundtrip with compression" | PASS |
 | (original) | "broadcast detection" | PASS |

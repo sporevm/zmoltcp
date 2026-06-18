@@ -146,7 +146,7 @@ pub fn parse(
         },
         .dst_unreachable => {
             if (body.len < 4 + ipv6.HEADER_LEN) return error.Truncated;
-            const inner = ipv6.parse(body[4..]) catch return error.BadVersion;
+            const inner = ipv6.parseHeader(body[4..]) catch return error.BadVersion;
             return .{ .dst_unreachable = .{
                 .reason = @enumFromInt(data[1]),
                 .header = inner,
@@ -155,7 +155,7 @@ pub fn parse(
         },
         .pkt_too_big => {
             if (body.len < 4 + ipv6.HEADER_LEN) return error.Truncated;
-            const inner = ipv6.parse(body[4..]) catch return error.BadVersion;
+            const inner = ipv6.parseHeader(body[4..]) catch return error.BadVersion;
             return .{ .pkt_too_big = .{
                 .mtu = readU32(body[0..4]),
                 .header = inner,
@@ -164,7 +164,7 @@ pub fn parse(
         },
         .time_exceeded => {
             if (body.len < 4 + ipv6.HEADER_LEN) return error.Truncated;
-            const inner = ipv6.parse(body[4..]) catch return error.BadVersion;
+            const inner = ipv6.parseHeader(body[4..]) catch return error.BadVersion;
             return .{ .time_exceeded = .{
                 .reason = @enumFromInt(data[1]),
                 .header = inner,
@@ -173,7 +173,7 @@ pub fn parse(
         },
         .param_problem => {
             if (body.len < 4 + ipv6.HEADER_LEN) return error.Truncated;
-            const inner = ipv6.parse(body[4..]) catch return error.BadVersion;
+            const inner = ipv6.parseHeader(body[4..]) catch return error.BadVersion;
             return .{ .param_problem = .{
                 .reason = @enumFromInt(data[1]),
                 .pointer = readU32(body[0..4]),
@@ -403,6 +403,29 @@ test "pkt_too_big roundtrip" {
     const parsed = try parse(buf[0..len], SRC_ADDR, DST_ADDR);
     try testing.expectEqual(@as(u32, 1500), parsed.pkt_too_big.mtu);
     try testing.expectEqual(ipv6.Protocol.udp, parsed.pkt_too_big.header.next_header);
+}
+
+test "pkt_too_big parses partial invoking packet" {
+    const inner_header: ipv6.Repr = .{
+        .src_addr = SRC_ADDR,
+        .dst_addr = DST_ADDR,
+        .next_header = .udp,
+        .payload_len = 12,
+        .hop_limit = 64,
+    };
+    const partial_payload = [_]u8{ 0xBF, 0x00 };
+    const repr: Repr = .{ .pkt_too_big = .{
+        .mtu = 1280,
+        .header = inner_header,
+        .data = &partial_payload,
+    } };
+    var buf: [50]u8 = undefined;
+    const len = try emit(repr, SRC_ADDR, DST_ADDR, &buf);
+
+    const parsed = try parse(buf[0..len], SRC_ADDR, DST_ADDR);
+    try testing.expectEqual(@as(u32, 1280), parsed.pkt_too_big.mtu);
+    try testing.expectEqual(@as(u16, 12), parsed.pkt_too_big.header.payload_len);
+    try testing.expectEqualSlices(u8, &partial_payload, parsed.pkt_too_big.data);
 }
 
 test "dst_unreachable roundtrip" {

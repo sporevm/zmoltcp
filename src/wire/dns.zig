@@ -142,6 +142,7 @@ pub fn parseNamePart(bytes: []const u8) ParseError!struct { rest: []const u8, na
 pub fn parseName(packet_data: []const u8, name_start: usize) ParseError!NameLabels {
     var result = NameLabels{};
     var packet = packet_data;
+    if (name_start >= packet.len) return error.Truncated;
     var bytes = packet[name_start..];
 
     while (true) {
@@ -346,6 +347,10 @@ test "parse name with pointer compression" {
     try testing.expectEqualSlices(u8, "c10r", n4.labels[1]);
     try testing.expectEqualSlices(u8, "facebook", n4.labels[2]);
     try testing.expectEqualSlices(u8, "com", n4.labels[3]);
+}
+
+test "parse name rejects out-of-range start" {
+    try testing.expectError(error.Truncated, parseName(&[_]u8{0x00}, 2));
 }
 
 // [smoltcp:wire/dns.rs:test_parse_request]

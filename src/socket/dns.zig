@@ -100,16 +100,34 @@ pub fn Socket(comptime Ip: type) type {
         queries: []QuerySlot,
         servers: [MAX_SERVER_COUNT]Ip.Address = undefined,
         server_count: usize = 0,
+        query_rng: std.Random.DefaultPrng,
 
         pub fn init(queries: []QuerySlot, servers: []const Ip.Address) Self {
+            return initWithSeed(queries, servers, defaultQuerySeed(servers));
+        }
+
+        pub fn initWithRandom(queries: []QuerySlot, servers: []const Ip.Address, random: std.Random) Self {
+            return initWithSeed(queries, servers, random.int(u64));
+        }
+
+        pub fn initWithSeed(queries: []QuerySlot, servers: []const Ip.Address, seed: u64) Self {
             var s = Self{
                 .queries = queries,
+                .query_rng = std.Random.DefaultPrng.init(seed),
             };
             s.updateServers(servers);
             for (queries) |*q| {
                 q.state = null;
             }
             return s;
+        }
+
+        pub fn setQuerySeed(self: *Self, seed: u64) void {
+            self.query_rng.seed(seed);
+        }
+
+        pub fn setQueryRandom(self: *Self, random: std.Random) void {
+            self.setQuerySeed(random.int(u64));
         }
 
         pub fn updateServers(self: *Self, servers: []const Ip.Address) void {
@@ -186,8 +204,8 @@ pub fn Socket(comptime Ip: type) type {
             var pq = PendingQuery{
                 .name_len = raw_name.len,
                 .type_ = type_,
-                .txid = testTransactionId(),
-                .port = testSourcePort(),
+                .txid = self.nextTransactionId(),
+                .port = self.nextSourcePort(),
                 .delay = RETRANSMIT_DELAY,
                 .timeout_at = null,
                 .retransmit_at = Instant.ZERO,
@@ -219,7 +237,7 @@ pub fn Socket(comptime Ip: type) type {
             self.queries[handle.index].state = null;
         }
 
-        pub fn process(self: *Self, dst_port: u16, pkt_data: []const u8) void {
+        pub fn process(self: *Self, src_ip: Ip.Address, dst_port: u16, pkt_data: []const u8) void {
             if (pkt_data.len < wire.HEADER_LEN) return;
 
             const pkt_opcode = wire.opcode(pkt_data) catch return;
@@ -243,19 +261,20 @@ pub fn Socket(comptime Ip: type) type {
                 };
 
                 if (dst_port != pq.port or pkt_txid != pq.txid) continue;
-
-                if (pkt_rcode == .nx_domain) {
-                    slot.state = .failure;
-                    continue;
-                }
+                if (!self.responseSourceMatches(pq, src_ip)) continue;
 
                 const pld = wire.payload(pkt_data) catch return;
                 const qr = wire.parseQuestion(pld) catch return;
-                if (qr.question.type_ != pq.type_) return;
+                if (qr.question.type_ != pq.type_) continue;
 
                 const q_name = wire.parseName(pkt_data, headerOffset(pkt_data, qr.question.name)) catch return;
                 const pq_name = wire.parseName(pq.name[0..pq.name_len], 0) catch return;
-                if (!wire.eqNames(q_name, pq_name)) return;
+                if (!wire.eqNames(q_name, pq_name)) continue;
+
+                if (pkt_rcode == .nx_domain) {
+                    slot.state = .failure;
+                    return;
+                }
 
                 var addresses = Addresses{};
                 var rest = qr.rest;
@@ -268,7 +287,8 @@ pub fn Socket(comptime Ip: type) type {
                     if (!wire.eqNames(rec_name, cur_name)) continue;
 
                     switch (ar.record.data) {
-                        .a => |addr| addresses.push(addr),
+                        .a => |addr| if (comptime !is_v6) addresses.push(addr),
+                        .aaaa => |addr| if (comptime is_v6) addresses.push(addr),
                         .cname => |cname_data| {
                             const cname_labels = wire.parseName(pkt_data, headerOffset(pkt_data, cname_data)) catch return;
                             pq.name_len = wire.copyName(&pq.name, cname_labels) catch return;
@@ -366,12 +386,29 @@ pub fn Socket(comptime Ip: type) type {
             return earliest;
         }
 
-        fn testTransactionId() u16 {
-            return 0xABCD;
+        fn nextTransactionId(self: *Self) u16 {
+            return self.query_rng.random().int(u16);
         }
 
-        fn testSourcePort() u16 {
-            return 49152;
+        fn nextSourcePort(self: *Self) u16 {
+            return 49152 + self.query_rng.random().uintLessThan(u16, 16384);
+        }
+
+        fn responseSourceMatches(self: *const Self, pq: PendingQuery, src_ip: Ip.Address) bool {
+            if (pq.mdns) return true;
+            if (pq.server_idx >= self.server_count) return false;
+            return std.mem.eql(u8, &src_ip, &self.servers[pq.server_idx]);
+        }
+
+        fn defaultQuerySeed(servers: []const Ip.Address) u64 {
+            var stack_marker: u8 = 0;
+            const stack_addr = @intFromPtr(&stack_marker);
+
+            var hasher = std.hash.Wyhash.init(0xe7037ed1a0b428db);
+            hasher.update(std.mem.asBytes(&stack_addr));
+            for (servers) |server| hasher.update(&server);
+            const seed = hasher.final();
+            return if (seed == 0) 0x8ebc6af09c88c6e3 else seed;
         }
     };
 }
@@ -389,8 +426,8 @@ const testing = std.testing;
 const DnsSock = Socket(ipv4);
 const DNS_SERVER_1 = [4]u8{ 8, 8, 8, 8 };
 const DNS_SERVER_2 = [4]u8{ 8, 8, 4, 4 };
-const TXID: u16 = 0xABCD;
-const SRC_PORT: u16 = 49152;
+const DnsSock6 = Socket(ipv6);
+const DNS_SERVER_6_1 = [16]u8{ 0x20, 0x01, 0x48, 0x60, 0x48, 0x60, 0, 0, 0, 0, 0, 0, 0, 0, 0x88, 0x88 };
 
 fn createSocket() struct { socket: DnsSock, slots: *[4]DnsSock.QuerySlot, buf: *[512]u8 } {
     const S = struct {
@@ -400,7 +437,21 @@ fn createSocket() struct { socket: DnsSock, slots: *[4]DnsSock.QuerySlot, buf: *
     @memset(std.mem.asBytes(&S.slots), 0);
     const servers = [_][4]u8{ DNS_SERVER_1, DNS_SERVER_2 };
     return .{
-        .socket = DnsSock.init(&S.slots, &servers),
+        .socket = DnsSock.initWithSeed(&S.slots, &servers, 0x1234_5678_9abc_def0),
+        .slots = &S.slots,
+        .buf = &S.buf,
+    };
+}
+
+fn createSocket6() struct { socket: DnsSock6, slots: *[4]DnsSock6.QuerySlot, buf: *[512]u8 } {
+    const S = struct {
+        var slots: [4]DnsSock6.QuerySlot = [_]DnsSock6.QuerySlot{.{}} ** 4;
+        var buf: [512]u8 = undefined;
+    };
+    @memset(std.mem.asBytes(&S.slots), 0);
+    const servers = [_][16]u8{DNS_SERVER_6_1};
+    return .{
+        .socket = DnsSock6.initWithSeed(&S.slots, &servers, 0xfedc_ba98_7654_3210),
         .slots = &S.slots,
         .buf = &S.buf,
     };
@@ -472,6 +523,54 @@ fn buildResponse(txid: u16, rcode: wire.Rcode, question_name: []const u8, questi
         pos += 2;
         @memcpy(buf[pos..][0..4], &addr);
         pos += 4;
+    }
+
+    return .{ .data = buf, .len = pos };
+}
+
+fn buildAaaaResponse(txid: u16, question_name: []const u8, answers: []const [16]u8) struct { data: [512]u8, len: usize } {
+    var buf: [512]u8 = undefined;
+    @memset(&buf, 0);
+
+    buf[0] = @truncate(txid >> 8);
+    buf[1] = @truncate(txid);
+    const flags_val = wire.Flags.RESPONSE | wire.Flags.RECURSION_DESIRED | wire.Flags.RECURSION_AVAILABLE;
+    buf[2] = @truncate(flags_val >> 8);
+    buf[3] = @truncate(flags_val);
+    buf[4] = 0;
+    buf[5] = 1; // QDCOUNT
+    buf[6] = 0;
+    buf[7] = @truncate(answers.len); // ANCOUNT
+
+    var pos: usize = 12;
+    @memcpy(buf[pos..][0..question_name.len], question_name);
+    pos += question_name.len;
+    const qt = @intFromEnum(wire.Type.aaaa);
+    buf[pos] = @truncate(qt >> 8);
+    buf[pos + 1] = @truncate(qt);
+    buf[pos + 2] = 0;
+    buf[pos + 3] = 1; // CLASS_IN
+    pos += 4;
+
+    for (answers) |addr| {
+        buf[pos] = 0xc0;
+        buf[pos + 1] = 0x0c;
+        pos += 2;
+        buf[pos] = @truncate(qt >> 8);
+        buf[pos + 1] = @truncate(qt);
+        buf[pos + 2] = 0;
+        buf[pos + 3] = 1; // CLASS IN
+        pos += 4;
+        buf[pos] = 0;
+        buf[pos + 1] = 0;
+        buf[pos + 2] = 0;
+        buf[pos + 3] = 60; // TTL = 60
+        pos += 4;
+        buf[pos] = 0;
+        buf[pos + 1] = 16; // RDLENGTH
+        pos += 2;
+        @memcpy(buf[pos..][0..16], &addr);
+        pos += 16;
     }
 
     return .{ .data = buf, .len = pos };
@@ -586,15 +685,32 @@ test "dispatch emits query packet" {
     var s = &ctx.socket;
     const buf = ctx.buf;
 
-    _ = try s.startQuery("google.com", .a);
+    const handle = try s.startQuery("google.com", .a);
+    const pq = s.queries[handle.index].state.?.pending;
     const result = s.dispatch(Instant.fromMillis(0), buf) orelse return error.TestExpectedEqual;
 
     // Verify packet structure
-    try testing.expectEqual(TXID, try wire.transactionId(result.payload));
+    try testing.expectEqual(pq.txid, try wire.transactionId(result.payload));
     try testing.expectEqual(wire.Opcode.query, try wire.opcode(result.payload));
     try testing.expectEqual(@as(u16, 1), try wire.questionCount(result.payload));
-    try testing.expectEqual(SRC_PORT, result.src_port);
+    try testing.expectEqual(pq.port, result.src_port);
+    try testing.expect(result.src_port >= 49152);
     try testing.expectEqualSlices(u8, &DNS_SERVER_1, &result.dst_ip);
+}
+
+test "start query rotates transaction IDs and source ports" {
+    var ctx = createSocket();
+    var s = &ctx.socket;
+
+    const h1 = try s.startQuery("a.com", .a);
+    const q1 = s.queries[h1.index].state.?.pending;
+    const h2 = try s.startQuery("b.com", .a);
+    const q2 = s.queries[h2.index].state.?.pending;
+
+    try testing.expect(q1.txid != q2.txid);
+    try testing.expect(q1.port != q2.port);
+    try testing.expect(q1.port >= 49152);
+    try testing.expect(q2.port >= 49152);
 }
 
 // (original)
@@ -667,15 +783,74 @@ test "process A response" {
 
     const handle = try s.startQuery("google.com", .a);
     _ = s.dispatch(Instant.fromMillis(0), buf);
+    const pq = s.queries[handle.index].state.?.pending;
 
     const name_enc = encodeName("google.com");
     const addr = [4]u8{ 172, 217, 14, 206 };
-    const resp = buildResponse(TXID, .no_error, name_enc.data[0..name_enc.len], .a, &[_][4]u8{addr});
+    const resp = buildResponse(pq.txid, .no_error, name_enc.data[0..name_enc.len], .a, &[_][4]u8{addr});
 
-    s.process(SRC_PORT, resp.data[0..resp.len]);
+    s.process(DNS_SERVER_1, pq.port, resp.data[0..resp.len]);
 
     const result = try s.getQueryResult(handle);
     try testing.expectEqual(@as(u8, 1), result.len);
+    try testing.expectEqualSlices(u8, &addr, &result.addrs[0]);
+}
+
+test "process AAAA response for IPv6 socket" {
+    var ctx = createSocket6();
+    var s = &ctx.socket;
+    const buf = ctx.buf;
+
+    const handle = try s.startQuery("example.com", .aaaa);
+    _ = s.dispatch(Instant.fromMillis(0), buf);
+    const pq = s.queries[handle.index].state.?.pending;
+
+    const name_enc = encodeName("example.com");
+    const addr = [16]u8{ 0x26, 0x06, 0x28, 0x00, 0x02, 0x20, 0x00, 0x01, 0x02, 0x48, 0x18, 0x93, 0x25, 0xc8, 0x19, 0x46 };
+    const resp = buildAaaaResponse(pq.txid, name_enc.data[0..name_enc.len], &[_][16]u8{addr});
+
+    s.process(DNS_SERVER_6_1, pq.port, resp.data[0..resp.len]);
+
+    const result = try s.getQueryResult(handle);
+    try testing.expectEqual(@as(u8, 1), result.len);
+    try testing.expectEqualSlices(u8, &addr, &result.addrs[0]);
+}
+
+test "IPv6 DNS socket ignores A answers" {
+    var ctx = createSocket6();
+    var s = &ctx.socket;
+    const buf = ctx.buf;
+
+    const handle = try s.startQuery("example.com", .aaaa);
+    _ = s.dispatch(Instant.fromMillis(0), buf);
+    const pq = s.queries[handle.index].state.?.pending;
+
+    const name_enc = encodeName("example.com");
+    const resp = buildResponse(pq.txid, .no_error, name_enc.data[0..name_enc.len], .aaaa, &[_][4]u8{.{ 192, 0, 2, 1 }});
+
+    s.process(DNS_SERVER_6_1, pq.port, resp.data[0..resp.len]);
+
+    try testing.expectError(error.Failed, s.getQueryResult(handle));
+}
+
+test "process ignores response from unexpected server" {
+    var ctx = createSocket();
+    var s = &ctx.socket;
+    const buf = ctx.buf;
+
+    const handle = try s.startQuery("google.com", .a);
+    _ = s.dispatch(Instant.fromMillis(0), buf);
+    const pq = s.queries[handle.index].state.?.pending;
+
+    const name_enc = encodeName("google.com");
+    const addr = [4]u8{ 172, 217, 14, 206 };
+    const resp = buildResponse(pq.txid, .no_error, name_enc.data[0..name_enc.len], .a, &[_][4]u8{addr});
+
+    s.process(DNS_SERVER_2, pq.port, resp.data[0..resp.len]);
+    try testing.expectError(error.Pending, s.getQueryResult(handle));
+
+    s.process(DNS_SERVER_1, pq.port, resp.data[0..resp.len]);
+    const result = try s.getQueryResult(handle);
     try testing.expectEqualSlices(u8, &addr, &result.addrs[0]);
 }
 
@@ -687,12 +862,33 @@ test "process NXDomain" {
 
     const handle = try s.startQuery("nonexistent.com", .a);
     _ = s.dispatch(Instant.fromMillis(0), buf);
+    const pq = s.queries[handle.index].state.?.pending;
 
     const name_enc = encodeName("nonexistent.com");
-    const resp = buildResponse(TXID, .nx_domain, name_enc.data[0..name_enc.len], .a, &[_][4]u8{});
+    const resp = buildResponse(pq.txid, .nx_domain, name_enc.data[0..name_enc.len], .a, &[_][4]u8{});
 
-    s.process(SRC_PORT, resp.data[0..resp.len]);
+    s.process(DNS_SERVER_1, pq.port, resp.data[0..resp.len]);
 
+    try testing.expectError(error.Failed, s.getQueryResult(handle));
+}
+
+test "process NXDomain validates question before failure" {
+    var ctx = createSocket();
+    var s = &ctx.socket;
+    const buf = ctx.buf;
+
+    const handle = try s.startQuery("nonexistent.com", .a);
+    _ = s.dispatch(Instant.fromMillis(0), buf);
+    const pq = s.queries[handle.index].state.?.pending;
+
+    const wrong_name = encodeName("other.com");
+    const forged = buildResponse(pq.txid, .nx_domain, wrong_name.data[0..wrong_name.len], .a, &[_][4]u8{});
+    s.process(DNS_SERVER_1, pq.port, forged.data[0..forged.len]);
+    try testing.expectError(error.Pending, s.getQueryResult(handle));
+
+    const name_enc = encodeName("nonexistent.com");
+    const resp = buildResponse(pq.txid, .nx_domain, name_enc.data[0..name_enc.len], .a, &[_][4]u8{});
+    s.process(DNS_SERVER_1, pq.port, resp.data[0..resp.len]);
     try testing.expectError(error.Failed, s.getQueryResult(handle));
 }
 
@@ -704,19 +900,20 @@ test "process CNAME then A" {
 
     const handle = try s.startQuery("www.example.com", .a);
     _ = s.dispatch(Instant.fromMillis(0), buf);
+    const pq = s.queries[handle.index].state.?.pending;
 
     const question_name = encodeName("www.example.com");
     const cname_target = encodeName("cdn.example.com");
     const addr = [4]u8{ 93, 184, 216, 34 };
 
     const resp = buildCnameResponse(
-        TXID,
+        pq.txid,
         question_name.data[0..question_name.len],
         cname_target.data[0..cname_target.len],
         addr,
     );
 
-    s.process(SRC_PORT, resp.data[0..resp.len]);
+    s.process(DNS_SERVER_1, pq.port, resp.data[0..resp.len]);
 
     const result = try s.getQueryResult(handle);
     try testing.expectEqual(@as(u8, 1), result.len);

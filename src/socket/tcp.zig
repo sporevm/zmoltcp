@@ -621,6 +621,9 @@ pub fn Socket(comptime Ip: type, comptime max_asm_segs: usize) type {
         remote_mss: usize,
         remote_last_ts: ?Instant,
 
+        isn_secret: u64,
+        isn_counter: u32,
+
         tsval_generator: ?*const fn () u32,
         last_remote_tsval: u32,
 
@@ -641,6 +644,14 @@ pub fn Socket(comptime Ip: type, comptime max_asm_segs: usize) type {
         }
 
         pub fn init(rx_storage: []u8, tx_storage: []u8) Self {
+            return initWithInitialSequenceSecret(rx_storage, tx_storage, defaultInitialSequenceSecret(rx_storage, tx_storage));
+        }
+
+        pub fn initWithRandom(rx_storage: []u8, tx_storage: []u8, random: std.Random) Self {
+            return initWithInitialSequenceSecret(rx_storage, tx_storage, random.int(u64));
+        }
+
+        pub fn initWithInitialSequenceSecret(rx_storage: []u8, tx_storage: []u8, secret: u64) Self {
             return .{
                 .state = .closed,
                 .timer = Timer.init(),
@@ -665,6 +676,8 @@ pub fn Socket(comptime Ip: type, comptime max_asm_segs: usize) type {
                 .remote_has_sack = false,
                 .remote_mss = DEFAULT_MSS,
                 .remote_last_ts = null,
+                .isn_secret = normalizeInitialSequenceSecret(secret),
+                .isn_counter = 0,
                 .tsval_generator = null,
                 .last_remote_tsval = 0,
                 .local_rx_last_seq = null,
@@ -676,6 +689,15 @@ pub fn Socket(comptime Ip: type, comptime max_asm_segs: usize) type {
                 .nagle = true,
                 .congestion_controller = .{ .none = .{} },
             };
+        }
+
+        pub fn setInitialSequenceSecret(self: *Self, secret: u64) void {
+            self.isn_secret = normalizeInitialSequenceSecret(secret);
+            self.isn_counter = 0;
+        }
+
+        pub fn setInitialSequenceRandom(self: *Self, random: std.Random) void {
+            self.setInitialSequenceSecret(random.int(u64));
         }
 
         fn reset(self: *Self) void {
@@ -876,13 +898,48 @@ pub fn Socket(comptime Ip: type, comptime max_asm_segs: usize) type {
             };
             self.state = .syn_sent;
 
-            const seq = localSeqNo();
+            const seq = self.nextInitialSequence(self.tuple.?.local, self.tuple.?.remote);
             self.local_seq_no = seq;
             self.remote_last_seq = seq;
         }
 
-        fn localSeqNo() SeqNumber {
-            return SeqNumber{ .value = 10000 };
+        fn nextInitialSequence(self: *Self, local: Endpoint, remote: Endpoint) SeqNumber {
+            self.isn_counter +%= 64000;
+
+            var hasher = std.hash.Wyhash.init(self.isn_secret);
+            hasher.update(&local.addr);
+            updatePortHash(&hasher, local.port);
+            hasher.update(&remote.addr);
+            updatePortHash(&hasher, remote.port);
+
+            const tuple_hash: u32 = @truncate(hasher.final());
+            return SeqNumber.fromU32(tuple_hash +% self.isn_counter);
+        }
+
+        fn updatePortHash(hasher: *std.hash.Wyhash, port: u16) void {
+            const bytes = [2]u8{ @truncate(port >> 8), @truncate(port) };
+            hasher.update(&bytes);
+        }
+
+        fn defaultInitialSequenceSecret(rx_storage: []u8, tx_storage: []u8) u64 {
+            var stack_marker: u8 = 0;
+            const stack_addr = @intFromPtr(&stack_marker);
+            const rx_addr = @intFromPtr(rx_storage.ptr);
+            const tx_addr = @intFromPtr(tx_storage.ptr);
+            const rx_len = rx_storage.len;
+            const tx_len = tx_storage.len;
+
+            var hasher = std.hash.Wyhash.init(0x9089_80ad_9a7e_2329);
+            hasher.update(std.mem.asBytes(&stack_addr));
+            hasher.update(std.mem.asBytes(&rx_addr));
+            hasher.update(std.mem.asBytes(&tx_addr));
+            hasher.update(std.mem.asBytes(&rx_len));
+            hasher.update(std.mem.asBytes(&tx_len));
+            return normalizeInitialSequenceSecret(hasher.final());
+        }
+
+        fn normalizeInitialSequenceSecret(secret: u64) u64 {
+            return if (secret == 0) 0xc2b2_ae3d_27d4_eb4f else secret;
         }
 
         pub fn close(self: *Self) void {
@@ -1172,7 +1229,7 @@ pub fn Socket(comptime Ip: type, comptime max_asm_segs: usize) type {
                             .local = .{ .addr = dst_addr, .port = repr.dst_port },
                             .remote = .{ .addr = src_addr, .port = repr.src_port },
                         };
-                        self.local_seq_no = localSeqNo();
+                        self.local_seq_no = self.nextInitialSequence(self.tuple.?.local, self.tuple.?.remote);
                         self.remote_seq_no = repr.seq_number.add(1);
                         self.remote_last_seq = self.local_seq_no;
                         self.remote_has_sack = repr.sack_permitted;
@@ -1771,6 +1828,7 @@ const LOCAL_SEQ = SeqNumber{ .value = 10000 };
 const REMOTE_SEQ = SeqNumber{ .value = -10001 };
 const LOCAL_ADDR = ipv4.Address{ 192, 168, 1, 1 };
 const REMOTE_ADDR = ipv4.Address{ 192, 168, 1, 2 };
+const TEST_ISN_SECRET: u64 = 0x1234_5678_9abc_def0;
 
 const LISTEN_END = TestSocket.ListenEndpoint{ .port = LOCAL_PORT };
 
@@ -2105,7 +2163,10 @@ test "listen receives SYN -> SYN-RECEIVED" {
         .window_len = SEND_TEMPL.window_len,
     });
     try testing.expectEqual(@as(?TcpRepr, null), reply);
-    try expectSanity(s, socketSynReceived());
+    var expected = socketSynReceived();
+    expected.local_seq_no = s.local_seq_no;
+    expected.remote_last_seq = s.local_seq_no;
+    try expectSanity(s, expected);
 }
 
 // [smoltcp:socket/tcp.rs:test_listen_syn_reject_ack]
@@ -2582,6 +2643,7 @@ test "full three-way handshake via listen" {
     });
     try testing.expectEqual(@as(?TcpRepr, null), reply1);
     try testing.expectEqual(State.syn_received, s.state);
+    const local_seq = s.local_seq_no;
 
     // We dispatch SYN|ACK.
     const syn_ack = recvAt0(&s);
@@ -2594,7 +2656,7 @@ test "full three-way handshake via listen" {
         .src_port = REMOTE_PORT,
         .dst_port = 80,
         .seq_number = REMOTE_SEQ.add(1),
-        .ack_number = LOCAL_SEQ.add(1),
+        .ack_number = local_seq.add(1),
         .window_len = 256,
     });
     try testing.expectEqual(@as(?TcpRepr, null), reply2);
@@ -2605,6 +2667,7 @@ test "full handshake via connect" {
     var s = socketNew();
     try s.connect(REMOTE_ADDR, REMOTE_PORT, LOCAL_ADDR, LOCAL_PORT);
     try testing.expectEqual(State.syn_sent, s.state);
+    const local_seq = s.local_seq_no;
 
     // Dispatch SYN.
     const syn = recvAt0(&s);
@@ -2618,7 +2681,7 @@ test "full handshake via connect" {
         .dst_port = LOCAL_PORT,
         .control = .syn,
         .seq_number = REMOTE_SEQ,
-        .ack_number = LOCAL_SEQ.add(1),
+        .ack_number = local_seq.add(1),
         .window_len = 256,
     });
     try testing.expectEqual(@as(?TcpRepr, null), reply);
@@ -2788,11 +2851,54 @@ test "connect twice fails" {
     try testing.expectError(error.InvalidState, s.connect(REMOTE_ADDR, REMOTE_PORT, LOCAL_ADDR, LOCAL_PORT));
 }
 
+test "connect advances initial sequence numbers" {
+    var s = socketNew();
+    s.setInitialSequenceSecret(TEST_ISN_SECRET);
+
+    try s.connect(REMOTE_ADDR, REMOTE_PORT, LOCAL_ADDR, LOCAL_PORT);
+    const first = s.local_seq_no;
+
+    s.reset();
+    try s.connect(REMOTE_ADDR, REMOTE_PORT, LOCAL_ADDR, LOCAL_PORT);
+    const second = s.local_seq_no;
+
+    try testing.expect(!first.eql(second));
+}
+
+test "listen initial sequence numbers are tuple keyed" {
+    var s1 = socketListen();
+    s1.setInitialSequenceSecret(TEST_ISN_SECRET);
+    _ = sendPacketAt0(&s1, TcpRepr{
+        .src_port = REMOTE_PORT,
+        .dst_port = LOCAL_PORT,
+        .control = .syn,
+        .seq_number = REMOTE_SEQ,
+        .ack_number = null,
+        .window_len = SEND_TEMPL.window_len,
+    });
+
+    var s2 = socketListen();
+    s2.setInitialSequenceSecret(TEST_ISN_SECRET);
+    _ = sendPacketAt0(&s2, TcpRepr{
+        .src_port = REMOTE_PORT + 1,
+        .dst_port = LOCAL_PORT,
+        .control = .syn,
+        .seq_number = REMOTE_SEQ,
+        .ack_number = null,
+        .window_len = SEND_TEMPL.window_len,
+    });
+
+    try testing.expect(!s1.local_seq_no.eql(s2.local_seq_no));
+}
+
 // [smoltcp:socket/tcp.rs:test_syn_sent_sanity]
 test "SYN-SENT sanity" {
     var s = socketNew();
     try s.connect(REMOTE_ADDR, REMOTE_PORT, LOCAL_ADDR, LOCAL_PORT);
-    try expectSanity(s, socketSynSent());
+    var expected = socketSynSent();
+    expected.local_seq_no = s.local_seq_no;
+    expected.remote_last_seq = s.local_seq_no;
+    try expectSanity(s, expected);
 }
 
 // [smoltcp:socket/tcp.rs:test_syn_sent_syn_ack_not_incremented]
@@ -4932,6 +5038,7 @@ test "maximum segment size from SYN" {
     });
     try testing.expectEqual(State.syn_received, s.state);
     try testing.expectEqual(@as(usize, 6), s.remote_mss);
+    const local_seq = s.local_seq_no;
 
     // Complete handshake.
     _ = recvAt0(&s); // SYN|ACK
@@ -4939,7 +5046,7 @@ test "maximum segment size from SYN" {
         .src_port = SEND_TEMPL.src_port,
         .dst_port = SEND_TEMPL.dst_port,
         .seq_number = REMOTE_SEQ.add(1),
-        .ack_number = LOCAL_SEQ.add(1),
+        .ack_number = local_seq.add(1),
         .window_len = 1000,
     });
     try testing.expectEqual(State.established, s.state);
@@ -6507,15 +6614,15 @@ test "SYN-SENT syn ack no window scaling clears shift" {
 // [smoltcp:socket/tcp.rs:test_connect]
 test "connect full active open roundtrip" {
     var s = socketNew();
-    s.local_seq_no = LOCAL_SEQ;
 
     try s.connect(REMOTE_ADDR, REMOTE_PORT, LOCAL_ADDR, LOCAL_PORT);
     try testing.expectEqual(State.syn_sent, s.state);
+    const local_seq = s.local_seq_no;
 
     // Dispatch SYN and verify option fields.
     const syn = recvAt0(&s) orelse return error.TestUnexpectedResult;
     try testing.expectEqual(Control.syn, syn.control);
-    try testing.expect(syn.seq_number.eql(LOCAL_SEQ));
+    try testing.expect(syn.seq_number.eql(local_seq));
     try testing.expectEqual(@as(?SeqNumber, null), syn.ack_number);
     try testing.expectEqual(@as(?u16, BASE_MSS), syn.max_seg_size);
     try testing.expectEqual(@as(?u8, 0), syn.window_scale);
@@ -6527,7 +6634,7 @@ test "connect full active open roundtrip" {
         .dst_port = SEND_TEMPL.dst_port,
         .control = .syn,
         .seq_number = REMOTE_SEQ,
-        .ack_number = LOCAL_SEQ.add(1),
+        .ack_number = local_seq.add(1),
         .max_seg_size = BASE_MSS - 80,
         .window_scale = 0,
         .window_len = SEND_TEMPL.window_len,
@@ -6741,6 +6848,7 @@ test "tsval disabled in remote client" {
     });
     try testing.expectEqual(State.syn_received, s.state);
     try testing.expect(!s.timestampEnabled());
+    const local_seq = s.local_seq_no;
 
     // SYN-ACK should have no timestamp.
     const synack = recvAt0(&s) orelse return error.TestUnexpectedResult;
@@ -6753,7 +6861,7 @@ test "tsval disabled in remote client" {
         .src_port = REMOTE_PORT,
         .dst_port = LOCAL_PORT,
         .seq_number = REMOTE_SEQ.add(1),
-        .ack_number = LOCAL_SEQ.add(1),
+        .ack_number = local_seq.add(1),
         .window_len = 256,
     });
     try testing.expectEqual(State.established, s.state);
@@ -6777,6 +6885,7 @@ test "tsval disabled in local server" {
     });
     try testing.expectEqual(State.syn_received, s.state);
     try testing.expect(!s.timestampEnabled());
+    const local_seq = s.local_seq_no;
 
     // SYN-ACK should have no timestamp.
     const synack = recvAt0(&s) orelse return error.TestUnexpectedResult;
@@ -6789,7 +6898,7 @@ test "tsval disabled in local server" {
         .src_port = REMOTE_PORT,
         .dst_port = LOCAL_PORT,
         .seq_number = REMOTE_SEQ.add(1),
-        .ack_number = LOCAL_SEQ.add(1),
+        .ack_number = local_seq.add(1),
         .window_len = 256,
     });
     try testing.expectEqual(State.established, s.state);
@@ -6800,8 +6909,8 @@ test "tsval disabled in remote server" {
     var s = socketNew();
     s.setTsvalGenerator(&testTsvalGenerator);
     try testing.expect(s.timestampEnabled());
-    s.local_seq_no = LOCAL_SEQ;
     try s.connect(REMOTE_ADDR, REMOTE_PORT, LOCAL_ADDR, LOCAL_PORT);
+    const local_seq = s.local_seq_no;
 
     // Dispatch SYN: should include timestamp.
     const syn = recvAt0(&s) orelse return error.TestUnexpectedResult;
@@ -6816,7 +6925,7 @@ test "tsval disabled in remote server" {
         .dst_port = LOCAL_PORT,
         .control = .syn,
         .seq_number = REMOTE_SEQ,
-        .ack_number = LOCAL_SEQ.add(1),
+        .ack_number = local_seq.add(1),
         .window_len = 256,
         .max_seg_size = BASE_MSS - 80,
         .window_scale = 0,
@@ -6835,8 +6944,8 @@ test "tsval disabled in local client" {
     var s = socketNew();
     // No tsval generator set (default).
     try testing.expect(!s.timestampEnabled());
-    s.local_seq_no = LOCAL_SEQ;
     try s.connect(REMOTE_ADDR, REMOTE_PORT, LOCAL_ADDR, LOCAL_PORT);
+    const local_seq = s.local_seq_no;
 
     // Dispatch SYN: should have no timestamp.
     const syn = recvAt0(&s) orelse return error.TestUnexpectedResult;
@@ -6850,7 +6959,7 @@ test "tsval disabled in local client" {
         .dst_port = LOCAL_PORT,
         .control = .syn,
         .seq_number = REMOTE_SEQ,
-        .ack_number = LOCAL_SEQ.add(1),
+        .ack_number = local_seq.add(1),
         .window_len = 256,
         .max_seg_size = BASE_MSS - 80,
         .window_scale = 0,

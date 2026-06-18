@@ -325,6 +325,25 @@ pub fn IpState(comptime Ip: type) type {
             }
         }
 
+        pub fn removeIpAddr(self: *Self, addr: Ip.Address) bool {
+            var i = self.ip_addr_count;
+            while (i > 0) {
+                i -= 1;
+                if (std.mem.eql(u8, &self.ip_addrs[i].address, &addr)) {
+                    if (i + 1 < self.ip_addr_count) {
+                        std.mem.copyForwards(
+                            Cidr,
+                            self.ip_addrs[i .. self.ip_addr_count - 1],
+                            self.ip_addrs[i + 1 .. self.ip_addr_count],
+                        );
+                    }
+                    self.ip_addr_count -= 1;
+                    return true;
+                }
+            }
+            return false;
+        }
+
         pub fn setAddrs(self: *Self, cidrs: []const Cidr) void {
             const count = @min(cidrs.len, MAX_ADDR_COUNT);
             for (cidrs[0..count], 0..) |c, i| {
@@ -630,6 +649,44 @@ pub const Interface = struct {
         _ = self.joinMulticastGroupV6WithState(ipv6.LINK_LOCAL_ALL_NODES, .joined);
     }
 
+    fn removeIpv6AddrAndSolicitedNode(self: *Interface, addr: ipv6.Address) void {
+        if (!self.v6.removeIpAddr(addr)) return;
+
+        const sn = ipv6.solicitedNode(addr);
+        if (!self.hasSolicitedNode(sn)) {
+            self.removeMulticastGroupV6(sn);
+        }
+        self.neighbor_cache_v6.flush();
+    }
+
+    fn slaacHasValidPrefix(slaac: *const SlaacState, now: time.Instant) bool {
+        for (slaac.prefixes) |slot| {
+            const entry = slot orelse continue;
+            if (now.lessThan(entry.valid_until)) return true;
+        }
+        return false;
+    }
+
+    fn refreshSlaacPhaseAfterWithdraw(slaac: *SlaacState, now: time.Instant) void {
+        if (slaacHasValidPrefix(slaac, now) or slaac.phase != .configured) return;
+
+        slaac.phase = .soliciting;
+        slaac.rs_retries_left = SlaacState.MAX_RS_RETRIES;
+        slaac.next_rs_at = now;
+    }
+
+    fn withdrawSlaacPrefix(self: *Interface, slaac: *SlaacState, cidr: IpCidrV6) void {
+        for (&slaac.prefixes) |*slot| {
+            if (slot.*) |entry| {
+                if (std.mem.eql(u8, &entry.prefix.address, &cidr.address)) {
+                    self.removeIpv6AddrAndSolicitedNode(entry.prefix.address);
+                    slot.* = null;
+                    return;
+                }
+            }
+        }
+    }
+
     pub fn processRouterAdvertisement(
         self: *Interface,
         ip_repr: ipv6.Repr,
@@ -646,6 +703,11 @@ pub const Interface = struct {
             slaac.router_lifetime_until = self.now.add(
                 time.Duration.fromSecs(@as(i64, ra_data.router_lifetime)),
             );
+        } else if (slaac.default_router) |router| {
+            if (std.mem.eql(u8, &router, &ip_repr.src_addr)) {
+                slaac.default_router = null;
+                slaac.router_lifetime_until = null;
+            }
         }
 
         const prefix_info = ra_data.prefix_info orelse return;
@@ -657,6 +719,12 @@ pub const Interface = struct {
         @memcpy(addr[8..16], &iid);
 
         const cidr = IpCidrV6{ .address = addr, .prefix_len = 64 };
+        if (prefix_info.valid_lifetime == 0) {
+            self.withdrawSlaacPrefix(slaac, cidr);
+            refreshSlaacPhaseAfterWithdraw(slaac, self.now);
+            return;
+        }
+
         const valid_until = self.now.add(time.Duration.fromSecs(@as(i64, prefix_info.valid_lifetime)));
         const preferred_until = self.now.add(time.Duration.fromSecs(@as(i64, prefix_info.preferred_lifetime)));
 
@@ -672,12 +740,16 @@ pub const Interface = struct {
         }
 
         // New prefix: insert entry, add address, join solicited-node multicast
+        var inserted = false;
         for (&slaac.prefixes) |*slot| {
             if (slot.* == null) {
                 slot.* = .{ .prefix = cidr, .valid_until = valid_until, .preferred_until = preferred_until };
+                inserted = true;
                 break;
             }
         }
+        if (!inserted) return;
+
         self.v6.addIpAddr(cidr);
         _ = self.joinMulticastGroupV6WithState(ipv6.solicitedNode(addr), .joined);
 
@@ -696,28 +768,17 @@ pub const Interface = struct {
         }
 
         // Remove expired prefixes and their addresses
-        var any_valid = false;
         for (&slaac.prefixes) |*slot| {
             if (slot.*) |entry| {
                 if (!now.lessThan(entry.valid_until)) {
-                    // Prefix expired: remove address
-                    // (simplified: we don't actively remove from v6 ip_addrs
-                    // to avoid complex index management; IpState.addIpAddr
-                    // only adds, so expired addresses stay until setIpv6Addrs
-                    // is called. In practice, SLAAC renews before expiry.)
+                    self.removeIpv6AddrAndSolicitedNode(entry.prefix.address);
                     slot.* = null;
-                } else {
-                    any_valid = true;
                 }
             }
         }
 
         // If all prefixes expired and we had been configured, go back to soliciting
-        if (!any_valid and slaac.phase == .configured) {
-            slaac.phase = .soliciting;
-            slaac.rs_retries_left = SlaacState.MAX_RS_RETRIES;
-            slaac.next_rs_at = now;
-        }
+        refreshSlaacPhaseAfterWithdraw(slaac, now);
     }
 
     pub fn slaacPollAt(self: *const Interface) ?time.Instant {
@@ -789,6 +850,9 @@ pub const Interface = struct {
     }
 
     pub fn processIpv4(self: *Interface, data: []const u8) ?Response {
+        ipv4.checkLen(data) catch return null;
+        if (!ipv4.verifyChecksum(data)) return null;
+
         const ip_repr = ipv4.parse(data) catch return null;
         const is_broadcast = self.isBroadcast(ip_repr.dst_addr);
 

@@ -181,15 +181,15 @@ pub fn checkLen(data: []const u8) error{ Truncated, BadHeaderLen }!void {
     if (total_len < ihl or total_len > data.len) return error.Truncated;
 }
 
-/// Returns the IPv4 payload, clamped to `total_length`. The IP layer must
-/// trim trailing bytes (e.g. Ethernet minimum-frame padding) before handing
-/// the segment to higher layers -- otherwise padding leaks into TCP/UDP
-/// payloads. See issue #2.
+/// Returns the IPv4 payload, bounded by `total_length`. The IP layer must trim
+/// trailing bytes (e.g. Ethernet minimum-frame padding) before handing the
+/// segment to higher layers, but over-declared datagrams are rejected instead
+/// of being converted into partial upper-layer payloads.
 pub fn payloadSlice(data: []const u8) error{ Truncated, BadHeaderLen }![]const u8 {
     const ihl = try validatedHeaderLen(data);
-    const end = @min(totalLength(data), data.len);
-    if (end < ihl) return error.Truncated;
-    return data[ihl..end];
+    const total_len = totalLength(data);
+    if (total_len < ihl or total_len > data.len) return error.Truncated;
+    return data[ihl..total_len];
 }
 
 // -------------------------------------------------------------------------
@@ -260,13 +260,24 @@ test "IPv4 emit produces valid checksum" {
 }
 
 test "IPv4 payload extraction" {
-    // SAMPLE_IPV4 declares total_length=40 (20 header + 20 payload), but
-    // here we only supply 24 bytes (header + 4 of payload). payloadSlice
-    // returns what is present, clamped by data.len.
-    const pkt = SAMPLE_IPV4 ++ [_]u8{ 0xDE, 0xAD, 0xBE, 0xEF };
+    // SAMPLE_IPV4 declares total_length=40 (20 header + 20 payload).
+    const payload = [_]u8{
+        0xDE, 0xAD, 0xBE, 0xEF,
+        0x00, 0x01, 0x02, 0x03,
+        0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0A, 0x0B,
+        0x0C, 0x0D, 0x0E, 0x0F,
+    };
+    const pkt = SAMPLE_IPV4 ++ payload;
     const p = try payloadSlice(&pkt);
-    try testing.expectEqual(@as(usize, 4), p.len);
+    try testing.expectEqual(@as(usize, 20), p.len);
     try testing.expectEqual(@as(u8, 0xDE), p[0]);
+    try testing.expectEqual(@as(u8, 0x0F), p[19]);
+}
+
+test "IPv4 payload rejects over-declared total length" {
+    const pkt = SAMPLE_IPV4 ++ [_]u8{ 0xDE, 0xAD, 0xBE, 0xEF };
+    try testing.expectError(error.Truncated, payloadSlice(&pkt));
 }
 
 // Regression for issue #2: a minimum-size Ethernet frame (60 bytes minus

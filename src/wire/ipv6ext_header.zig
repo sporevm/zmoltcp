@@ -29,8 +29,9 @@ pub fn parse(data: []const u8) error{Truncated}!Repr {
     };
 }
 
-pub fn emit(repr: Repr, buf: []u8) error{BufferTooSmall}!usize {
+pub fn emit(repr: Repr, buf: []u8) error{ BufferTooSmall, BadLength }!usize {
     const total_len = headerLen(repr.length);
+    if (repr.data.len > total_len - 2) return error.BadLength;
     if (buf.len < total_len) return error.BufferTooSmall;
     buf[0] = repr.next_header;
     buf[1] = repr.length;
@@ -93,4 +94,20 @@ test "extension header roundtrip" {
 test "parse truncated" {
     try testing.expectError(error.Truncated, parse(&[_]u8{0x06}));
     try testing.expectError(error.Truncated, parse(&[_]u8{ 0x06, 0x01, 0x00, 0x00 }));
+}
+
+test "emit rejects data beyond encoded header length" {
+    var buf: [16]u8 = undefined;
+    try testing.expectError(error.BadLength, emit(.{
+        .next_header = 0x06,
+        .length = 0,
+        .data = &[_]u8{ 0, 1, 2, 3, 4, 5, 6 },
+    }, &buf));
+
+    const len = try emit(.{
+        .next_header = 0x06,
+        .length = 0,
+        .data = &[_]u8{ 0, 1, 2, 3, 4, 5 },
+    }, &buf);
+    try testing.expectEqual(@as(usize, 8), len);
 }

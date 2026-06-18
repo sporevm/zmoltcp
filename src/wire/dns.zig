@@ -142,6 +142,7 @@ pub fn parseNamePart(bytes: []const u8) ParseError!struct { rest: []const u8, na
 pub fn parseName(packet_data: []const u8, name_start: usize) ParseError!NameLabels {
     var result = NameLabels{};
     var packet = packet_data;
+    if (name_start >= packet.len) return error.Truncated;
     var bytes = packet[name_start..];
 
     while (true) {
@@ -217,6 +218,7 @@ pub fn parseQuestion(bytes: []const u8) ParseError!struct { rest: []const u8, qu
 
 pub const RecordData = union(enum) {
     a: [4]u8,
+    aaaa: [16]u8,
     cname: []const u8,
     other: struct { type_: Type, data: []const u8 },
 };
@@ -246,8 +248,10 @@ pub fn parseRecord(bytes: []const u8) ParseError!struct { rest: []const u8, reco
     const type_: Type = @enumFromInt(type_val);
 
     if (type_ == .a and rdata.len != 4) return error.Truncated;
+    if (type_ == .aaaa and rdata.len != 16) return error.Truncated;
     const record_data: RecordData = switch (type_) {
         .a => .{ .a = rdata[0..4].* },
+        .aaaa => .{ .aaaa = rdata[0..16].* },
         .cname => .{ .cname = rdata },
         else => .{ .other = .{ .type_ = type_, .data = rdata } },
     };
@@ -348,6 +352,10 @@ test "parse name with pointer compression" {
     try testing.expectEqualSlices(u8, "com", n4.labels[3]);
 }
 
+test "parse name rejects out-of-range start" {
+    try testing.expectError(error.Truncated, parseName(&[_]u8{0x00}, 2));
+}
+
 // [smoltcp:wire/dns.rs:test_parse_request]
 test "parse request" {
     const bytes = [_]u8{
@@ -406,6 +414,35 @@ test "parse response single A" {
     try testing.expectEqual(@as(u32, 202), ar.record.ttl);
     switch (ar.record.data) {
         .a => |addr| try testing.expectEqualSlices(u8, &[_]u8{ 0xac, 0xd9, 0xa8, 0xae }, &addr),
+        else => return error.TestExpectedEqual,
+    }
+    try testing.expectEqual(@as(usize, 0), ar.rest.len);
+}
+
+test "parse response single AAAA" {
+    const bytes = [_]u8{
+        0x12, 0x34, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x07, 0x65,
+        0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x03, 0x63, 0x6f, 0x6d, 0x00, 0x00, 0x1c, 0x00,
+        0x01, 0xc0, 0x0c, 0x00, 0x1c, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x10, 0x20,
+        0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x01,
+    };
+
+    try testing.expectEqual(@as(u16, 0x1234), try transactionId(&bytes));
+    try testing.expectEqual(@as(u16, 1), try answerCount(&bytes));
+
+    const pld = try payload(&bytes);
+    const qr = try parseQuestion(pld);
+    try testing.expectEqual(Type.aaaa, qr.question.type_);
+
+    const ar = try parseRecord(qr.rest);
+    try testing.expectEqualSlices(u8, &[_]u8{ 0xc0, 0x0c }, ar.record.name);
+    try testing.expectEqual(@as(u32, 60), ar.record.ttl);
+    switch (ar.record.data) {
+        .aaaa => |addr| try testing.expectEqualSlices(u8, &[_]u8{
+            0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+        }, &addr),
         else => return error.TestExpectedEqual,
     }
     try testing.expectEqual(@as(usize, 0), ar.rest.len);

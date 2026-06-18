@@ -172,29 +172,32 @@ fn parseOptions(
     var offset: usize = 0;
     while (offset < options_data.len) {
         const remaining = options_data[offset..];
-        const opt_len = ndiscoption.optionLen(remaining) catch |err| switch (err) {
-            error.Truncated => break,
-            error.BadLength => return error.BadLength,
-        };
-        if (ndiscoption.parse(remaining)) |opt| {
-            switch (opt) {
-                .source_link_layer_addr => |addr| {
-                    if (src_lladdr) |out| out.* = addr;
-                },
-                .target_link_layer_addr => |addr| {
-                    if (target_lladdr) |out| out.* = addr;
-                },
-                .mtu => |val| {
-                    if (mtu_out) |out| out.* = val;
-                },
-                .prefix_information => |pi| {
-                    if (prefix_out) |out| out.* = pi;
-                },
-                .unknown => {},
-            }
-        } else |_| {}
+        const opt_len = try ndiscoption.optionLen(remaining);
+        const opt = try ndiscoption.parse(remaining);
+        switch (opt) {
+            .source_link_layer_addr => |addr| {
+                if (src_lladdr) |out| out.* = addr;
+            },
+            .target_link_layer_addr => |addr| {
+                if (target_lladdr) |out| out.* = addr;
+            },
+            .mtu => |val| {
+                if (mtu_out) |out| out.* = val;
+            },
+            .prefix_information => |pi| {
+                if (prefix_out) |out| out.* = pi;
+            },
+            .unknown => {},
+        }
         offset += opt_len;
     }
+}
+
+fn emitOption(repr: ndiscoption.Repr, buf: []u8) error{BufferTooSmall}!usize {
+    return ndiscoption.emit(repr, buf) catch |err| switch (err) {
+        error.BufferTooSmall => error.BufferTooSmall,
+        error.BadLength => unreachable,
+    };
 }
 
 pub fn emit(repr: Repr, buf: []u8) error{BufferTooSmall}!usize {
@@ -205,7 +208,7 @@ pub fn emit(repr: Repr, buf: []u8) error{BufferTooSmall}!usize {
         .router_solicit => |rs| {
             @memset(buf[0..4], 0); // reserved
             if (rs.lladdr) |addr| {
-                _ = try ndiscoption.emit(.{ .source_link_layer_addr = addr }, buf[4..]);
+                _ = try emitOption(.{ .source_link_layer_addr = addr }, buf[4..]);
             }
         },
         .router_advert => |ra| {
@@ -219,20 +222,20 @@ pub fn emit(repr: Repr, buf: []u8) error{BufferTooSmall}!usize {
             writeU32(buf[8..12], ra.retrans_time);
             var pos: usize = 12;
             if (ra.lladdr) |addr| {
-                pos += try ndiscoption.emit(.{ .source_link_layer_addr = addr }, buf[pos..]);
+                pos += try emitOption(.{ .source_link_layer_addr = addr }, buf[pos..]);
             }
             if (ra.mtu) |val| {
-                pos += try ndiscoption.emit(.{ .mtu = val }, buf[pos..]);
+                pos += try emitOption(.{ .mtu = val }, buf[pos..]);
             }
             if (ra.prefix_info) |pi| {
-                pos += try ndiscoption.emit(.{ .prefix_information = pi }, buf[pos..]);
+                pos += try emitOption(.{ .prefix_information = pi }, buf[pos..]);
             }
         },
         .neighbor_solicit => |ns| {
             @memset(buf[0..4], 0); // reserved
             @memcpy(buf[4..20], &ns.target_addr);
             if (ns.lladdr) |addr| {
-                _ = try ndiscoption.emit(.{ .source_link_layer_addr = addr }, buf[20..]);
+                _ = try emitOption(.{ .source_link_layer_addr = addr }, buf[20..]);
             }
         },
         .neighbor_advert => |na| {
@@ -244,7 +247,7 @@ pub fn emit(repr: Repr, buf: []u8) error{BufferTooSmall}!usize {
             @memset(buf[1..4], 0); // reserved
             @memcpy(buf[4..20], &na.target_addr);
             if (na.lladdr) |addr| {
-                _ = try ndiscoption.emit(.{ .target_link_layer_addr = addr }, buf[20..]);
+                _ = try emitOption(.{ .target_link_layer_addr = addr }, buf[20..]);
             }
         },
         .redirect => |rd| {
@@ -252,7 +255,7 @@ pub fn emit(repr: Repr, buf: []u8) error{BufferTooSmall}!usize {
             @memcpy(buf[4..20], &rd.target_addr);
             @memcpy(buf[20..36], &rd.dest_addr);
             if (rd.lladdr) |addr| {
-                _ = try ndiscoption.emit(.{ .source_link_layer_addr = addr }, buf[36..]);
+                _ = try emitOption(.{ .source_link_layer_addr = addr }, buf[36..]);
             }
         },
     }
@@ -318,4 +321,27 @@ test "router advertisement roundtrip" {
 
 test "parse unrecognized NDP type" {
     try testing.expectError(error.Unrecognized, parse(0x01, &[_]u8{ 0, 0, 0, 0 }));
+}
+
+test "parse rejects malformed option blocks" {
+    try testing.expectError(error.Truncated, parse(ROUTER_ADVERT, &[_]u8{
+        0x40, 0x80, 0x03, 0x84,
+        0x00, 0x00, 0x03, 0x84,
+        0x00, 0x00, 0x03, 0x84,
+        0x01, 0x01, 0x52, 0x54, 0x00, 0x12, 0x34, 0x56,
+        0x01,
+    }));
+
+    try testing.expectError(error.BadLength, parse(ROUTER_ADVERT, &[_]u8{
+        0x40, 0x80, 0x03, 0x84,
+        0x00, 0x00, 0x03, 0x84,
+        0x00, 0x00, 0x03, 0x84,
+        0x03, 0x03, 0x40, 0xc0,
+        0x00, 0x00, 0x03, 0x84,
+        0x00, 0x00, 0x03, 0xe8,
+        0x00, 0x00, 0x00, 0x00,
+        0xfe, 0x80, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+    }));
 }

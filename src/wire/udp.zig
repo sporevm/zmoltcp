@@ -56,6 +56,13 @@ pub fn computeChecksumV6(src_ip: [16]u8, dst_ip: [16]u8, udp_data: []const u8) u
     return checksum.finish(checksum.calculate(udp_data, partial));
 }
 
+fn datagramLen(data: []const u8) error{Truncated}!usize {
+    if (data.len < HEADER_LEN) return error.Truncated;
+    const length: usize = @as(usize, data[4]) << 8 | @as(usize, data[5]);
+    if (length < HEADER_LEN or length > data.len) return error.Truncated;
+    return length;
+}
+
 /// Write the computed UDP checksum into an already-serialized buffer.
 /// RFC 768: if the computed checksum is zero, it is transmitted as 0xFFFF.
 pub fn fillChecksum(buf: []u8, src_ip: [4]u8, dst_ip: [4]u8) void {
@@ -72,17 +79,17 @@ pub fn fillChecksumV6(buf: []u8, src_ip: [16]u8, dst_ip: [16]u8) void {
 
 /// Verify UDP checksum. Returns true if valid or if checksum is disabled (0x0000).
 pub fn verifyChecksum(data: []const u8, src_ip: [4]u8, dst_ip: [4]u8) bool {
-    if (data.len < HEADER_LEN) return false;
+    const length = datagramLen(data) catch return false;
     if (readChecksumField(data) == 0) return true; // checksum disabled per RFC 768
-    return computeChecksum(src_ip, dst_ip, data) == 0;
+    return computeChecksum(src_ip, dst_ip, data[0..length]) == 0;
 }
 
 /// Verify UDP checksum over IPv6 pseudo-header.
 /// Unlike IPv4, zero checksum is NOT valid over IPv6 (RFC 8200 S8.1).
 pub fn verifyChecksumV6(data: []const u8, src_ip: [16]u8, dst_ip: [16]u8) bool {
-    if (data.len < HEADER_LEN) return false;
+    const length = datagramLen(data) catch return false;
     if (readChecksumField(data) == 0) return false; // zero checksum forbidden over IPv6
-    return computeChecksumV6(src_ip, dst_ip, data) == 0;
+    return computeChecksumV6(src_ip, dst_ip, data[0..length]) == 0;
 }
 
 fn readChecksumField(data: []const u8) u16 {
@@ -93,16 +100,12 @@ fn writeChecksumField(buf: []u8, raw: u16) void {
     checksum.writeU16(buf[6..8], if (raw == 0) 0xFFFF else raw);
 }
 
-/// Returns the UDP payload, clamped to the datagram's `length` field. The IP
-/// layer must trim any trailing bytes (e.g. link-layer padding) before
-/// handing the datagram to the application -- otherwise padding leaks into
-/// the payload. See issue #2.
+/// Returns the UDP payload described by the datagram's `length` field.
+/// Trailing bytes beyond that length are ignored as link-layer padding, but
+/// an over-declared length is rejected as a truncated datagram.
 pub fn payloadSlice(data: []const u8) error{Truncated}![]const u8 {
-    if (data.len < HEADER_LEN) return error.Truncated;
-    const length: usize = @as(usize, data[4]) << 8 | @as(usize, data[5]);
-    if (length < HEADER_LEN) return error.Truncated;
-    const end = @min(length, data.len);
-    return data[HEADER_LEN..end];
+    const length = try datagramLen(data);
+    return data[HEADER_LEN..length];
 }
 
 // -------------------------------------------------------------------------
@@ -170,6 +173,15 @@ test "UDP payload clamps trailing padding" {
     try testing.expectEqual(@as(u8, 0xBE), p[3]);
 }
 
+test "UDP payload rejects over-declared length" {
+    const data = [_]u8{
+        0x00, 0x35, 0xC0, 0x01,
+        0x00, 0x10, 0x00, 0x00, // length = 16, but only 12 bytes available
+        0xCA, 0xFE, 0xBA, 0xBE,
+    };
+    try testing.expectError(error.Truncated, payloadSlice(&data));
+}
+
 const SRC_ADDR: [4]u8 = .{ 192, 168, 1, 1 };
 const DST_ADDR: [4]u8 = .{ 192, 168, 1, 2 };
 
@@ -231,6 +243,28 @@ test "UDP disabled checksum passes verify" {
     try testing.expect(verifyChecksum(&buf, SRC_ADDR, DST_ADDR));
 }
 
+test "UDP checksum verifies declared length with trailing padding" {
+    var buf: [18]u8 = [_]u8{0} ** 18;
+    _ = try emit(.{
+        .src_port = 48896,
+        .dst_port = 53,
+        .length = 12,
+        .checksum = 0,
+    }, buf[0..12]);
+    @memcpy(buf[HEADER_LEN..12], &PAYLOAD_BYTES);
+    fillChecksum(buf[0..12], SRC_ADDR, DST_ADDR);
+    try testing.expect(verifyChecksum(&buf, SRC_ADDR, DST_ADDR));
+}
+
+test "UDP checksum rejects over-declared length" {
+    const data = [_]u8{
+        0x00, 0x35, 0xC0, 0x01,
+        0x00, 0x10, 0x00, 0x00, // checksum disabled, but length is malformed
+        0xCA, 0xFE, 0xBA, 0xBE,
+    };
+    try testing.expect(!verifyChecksum(&data, SRC_ADDR, DST_ADDR));
+}
+
 // -------------------------------------------------------------------------
 // IPv6 checksum tests
 // -------------------------------------------------------------------------
@@ -280,4 +314,13 @@ test "UDP v6 fillChecksum avoids zero" {
     fillChecksumV6(&buf, SRC_V6, DST_V6);
     const cksum = readChecksumField(&buf);
     try testing.expect(cksum != 0);
+}
+
+test "UDP v6 checksum rejects over-declared length" {
+    const data = [_]u8{
+        0x00, 0x35, 0xC0, 0x01,
+        0x00, 0x10, 0x12, 0x34,
+        0xCA, 0xFE, 0xBA, 0xBE,
+    };
+    try testing.expect(!verifyChecksumV6(&data, SRC_V6, DST_V6));
 }

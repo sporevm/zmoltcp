@@ -42,8 +42,9 @@ pub const OtherRepr = struct {
 };
 
 /// Parse an ICMP message from raw bytes (after IP header).
-pub fn parse(data: []const u8) error{Truncated}!Repr {
+pub fn parse(data: []const u8) error{ Truncated, BadChecksum }!Repr {
     if (data.len < HEADER_LEN) return error.Truncated;
+    if (!verifyChecksum(data)) return error.BadChecksum;
 
     const icmp_type: Type = @enumFromInt(data[0]);
     const code = data[1];
@@ -138,7 +139,7 @@ test "parse ICMP echo request" {
     const data = [_]u8{
         0x08, // type = echo request
         0x00, // code = 0
-        0x00, 0x00, // checksum (not verified here)
+        0x4c, 0x31, // checksum
         0xAB, 0xCD, // identifier
         0x00, 0x01, // sequence = 1
     };
@@ -157,7 +158,7 @@ test "parse ICMP dest unreachable" {
     const data = [_]u8{
         0x03, // type = dest_unreachable
         0x01, // code = host unreachable
-        0x00, 0x00, // checksum
+        0xfc, 0xfe, // checksum
         0x00, 0x00, 0x00, 0x00, // unused
     };
     const repr = try parse(&data);
@@ -187,11 +188,18 @@ test "ICMP echo emit with valid checksum" {
     try testing.expect(verifyChecksum(buf[0..len]));
 }
 
+test "ICMP parse rejects bad checksum" {
+    try testing.expectError(error.BadChecksum, parse(&[_]u8{
+        0x08, 0x00, 0x00, 0x00,
+        0xAB, 0xCD, 0x00, 0x01,
+    }));
+}
+
 // [smoltcp:wire/icmpv4.rs:test_check_len]
 test "ICMP check length" {
     try testing.expectError(error.Truncated, parse(&[_]u8{}));
     try testing.expectError(error.Truncated, parse(&[_]u8{ 0x0b, 0x00, 0x00, 0x00 }));
-    _ = try parse(&[_]u8{ 0x0b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 });
+    _ = try parse(&[_]u8{ 0x0b, 0x00, 0xf4, 0xff, 0x00, 0x00, 0x00, 0x00 });
 }
 
 test "ICMP echo roundtrip" {

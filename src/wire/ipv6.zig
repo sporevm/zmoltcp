@@ -158,18 +158,21 @@ pub const Repr = struct {
 };
 
 pub fn parse(data: []const u8) error{ Truncated, BadVersion }!Repr {
+    const repr = try parseHeader(data);
+    if (data.len < HEADER_LEN + @as(usize, repr.payload_len)) return error.Truncated;
+    return repr;
+}
+
+pub fn parseHeader(data: []const u8) error{ Truncated, BadVersion }!Repr {
     if (data.len < HEADER_LEN) return error.Truncated;
 
     const version: u4 = @truncate(data[0] >> 4);
     if (version != 6) return error.BadVersion;
 
-    const payload_len: u16 = @as(u16, data[4]) << 8 | @as(u16, data[5]);
-    if (data.len < HEADER_LEN + @as(usize, payload_len)) return error.Truncated;
-
     return .{
         .next_header = @enumFromInt(data[6]),
         .hop_limit = data[7],
-        .payload_len = payload_len,
+        .payload_len = @as(u16, data[4]) << 8 | @as(u16, data[5]),
         .src_addr = data[8..24].*,
         .dst_addr = data[24..40].*,
     };

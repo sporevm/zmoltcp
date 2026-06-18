@@ -62,8 +62,14 @@ pub fn parse(data: []const u8) error{ Truncated, Unrecognized }!Repr {
     }
 }
 
-pub fn emit(repr: Repr, buf: []u8) error{BufferTooSmall}!usize {
+pub fn emit(repr: Repr, buf: []u8) error{ BufferTooSmall, BadLength }!usize {
     const len = bufferLen(repr);
+    switch (repr) {
+        .rpl => |r| {
+            if (r.cmpr_i > 0x0F or r.cmpr_e > 0x0F or r.pad > 0x0F) return error.BadLength;
+        },
+        else => {},
+    }
     if (buf.len < len) return error.BufferTooSmall;
 
     switch (repr) {
@@ -137,4 +143,40 @@ test "parse RPL elided" {
 test "unrecognized routing type" {
     const data = [_]u8{ 0x00, 0x01, 0x00, 0x00, 0x00, 0x00 };
     try testing.expectError(error.Unrecognized, parse(&data));
+}
+
+test "RPL emit rejects non-nibble fields" {
+    var buf: [6]u8 = undefined;
+    try testing.expectError(error.BadLength, emit(.{ .rpl = .{
+        .segments_left = 0,
+        .cmpr_i = 0,
+        .cmpr_e = 16,
+        .pad = 0,
+        .addresses = &.{},
+    } }, &buf));
+    try testing.expectError(error.BadLength, emit(.{ .rpl = .{
+        .segments_left = 0,
+        .cmpr_i = 16,
+        .cmpr_e = 0,
+        .pad = 0,
+        .addresses = &.{},
+    } }, &buf));
+    try testing.expectError(error.BadLength, emit(.{ .rpl = .{
+        .segments_left = 0,
+        .cmpr_i = 0,
+        .cmpr_e = 0,
+        .pad = 16,
+        .addresses = &.{},
+    } }, &buf));
+
+    const len = try emit(.{ .rpl = .{
+        .segments_left = 0,
+        .cmpr_i = 15,
+        .cmpr_e = 15,
+        .pad = 15,
+        .addresses = &.{},
+    } }, &buf);
+    try testing.expectEqual(@as(usize, 6), len);
+    try testing.expectEqual(@as(u8, 0xff), buf[2]);
+    try testing.expectEqual(@as(u8, 0xf0), buf[3]);
 }

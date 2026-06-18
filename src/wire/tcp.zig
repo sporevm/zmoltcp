@@ -7,6 +7,7 @@ const checksum = @import("checksum.zig");
 
 pub const HEADER_LEN = 20; // Minimum (no options)
 pub const MAX_HEADER_LEN = 60; // data_offset=15 * 4
+pub const MAX_WINDOW_SCALE = 14;
 
 // -------------------------------------------------------------------------
 // Sequence Number (modular 2^32 arithmetic)
@@ -217,19 +218,27 @@ fn parseOptions(options: []const u8, repr: *Repr) void {
                 continue;
             },
             .mss => {
-                if (i + 4 > options.len) return;
+                if (i + 1 >= options.len) return;
+                const opt_len = options[i + 1];
+                if (opt_len != 4 or i + opt_len > options.len) return;
                 repr.max_seg_size = @as(u16, options[i + 2]) << 8 | @as(u16, options[i + 3]);
-                i += 4;
+                i += opt_len;
             },
             .window_scale => {
-                if (i + 3 > options.len) return;
-                repr.window_scale = options[i + 2];
-                i += 3;
+                if (i + 1 >= options.len) return;
+                const opt_len = options[i + 1];
+                if (opt_len != 3 or i + opt_len > options.len) return;
+                const scale = options[i + 2];
+                if (scale > MAX_WINDOW_SCALE) return;
+                repr.window_scale = scale;
+                i += opt_len;
             },
             .sack_permitted => {
-                if (i + 2 > options.len) return;
+                if (i + 1 >= options.len) return;
+                const opt_len = options[i + 1];
+                if (opt_len != 2 or i + opt_len > options.len) return;
                 repr.sack_permitted = true;
-                i += 2;
+                i += opt_len;
             },
             .sack => {
                 if (i + 1 >= options.len) return;
@@ -425,6 +434,15 @@ pub fn computeChecksum(src_ip: [4]u8, dst_ip: [4]u8, tcp_data: []const u8) u16 {
     return checksum.finish(sum);
 }
 
+pub fn verifyChecksum(src_ip: [4]u8, dst_ip: [4]u8, tcp_data: []const u8) bool {
+    return computeChecksum(src_ip, dst_ip, tcp_data) == 0;
+}
+
+pub fn verifyChecksumV6(src_ip: [16]u8, dst_ip: [16]u8, tcp_data: []const u8) bool {
+    const partial = checksum.pseudoHeaderChecksumV6(src_ip, dst_ip, 6, @intCast(tcp_data.len));
+    return checksum.finish(checksum.calculate(tcp_data, partial)) == 0;
+}
+
 // -------------------------------------------------------------------------
 // Tests
 // -------------------------------------------------------------------------
@@ -465,7 +483,8 @@ test "parse TCP bad data offset" {
         0x00, 0x00, 0x00, 0x01,
         0x00, 0x00, 0x00, 0x00,
         0x30, 0x02, // data_offset=3 (invalid, minimum is 5)
-        0x10, 0x00, 0x00, 0x00,
+        0x10, 0x00,
+        0x00, 0x00,
         0x00, 0x00,
     };
     _ = &data;
@@ -497,10 +516,8 @@ test "TCP SYN roundtrip" {
         0xC0, 0x02, 0x1F, 0x90,
         0x00, 0x00, 0x03, 0xEA,
         0x00, 0x00, 0x00, 0x00,
-        0x50, 0x02,
-        0x10, 0x00,
-        0x6E, 0x89,
-        0x00, 0x00,
+        0x50, 0x02, 0x10, 0x00,
+        0x6E, 0x89, 0x00, 0x00,
     };
     const repr = try parse(&original);
     var emitted: [HEADER_LEN]u8 = undefined;
@@ -516,8 +533,7 @@ test "TCP checksum computation" {
         0xC0, 0x02, 0x1F, 0x90,
         0x00, 0x00, 0x03, 0xEA,
         0x00, 0x00, 0x00, 0x00,
-        0x50, 0x02,
-        0x10, 0x00,
+        0x50, 0x02, 0x10, 0x00,
         0x00, 0x00, // checksum = 0
         0x00, 0x00,
     };
@@ -528,6 +544,29 @@ test "TCP checksum computation" {
     tcp_bytes[16] = @truncate(cksum >> 8);
     tcp_bytes[17] = @truncate(cksum & 0xFF);
     try testing.expectEqual(@as(u16, 0), computeChecksum(src_ip, dst_ip, &tcp_bytes));
+    try testing.expect(verifyChecksum(src_ip, dst_ip, &tcp_bytes));
+    tcp_bytes[19] ^= 0x01;
+    try testing.expect(!verifyChecksum(src_ip, dst_ip, &tcp_bytes));
+}
+
+test "TCP IPv6 checksum verification" {
+    const src_ip = [16]u8{ 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+    const dst_ip = [16]u8{ 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2 };
+    var tcp_bytes = [_]u8{
+        0xC0, 0x02, 0x1F, 0x90,
+        0x00, 0x00, 0x03, 0xEA,
+        0x00, 0x00, 0x00, 0x00,
+        0x50, 0x02, 0x10, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+    };
+
+    const partial = checksum.pseudoHeaderChecksumV6(src_ip, dst_ip, 6, tcp_bytes.len);
+    const cksum = checksum.finish(checksum.calculate(&tcp_bytes, partial));
+    tcp_bytes[16] = @truncate(cksum >> 8);
+    tcp_bytes[17] = @truncate(cksum);
+    try testing.expect(verifyChecksumV6(src_ip, dst_ip, &tcp_bytes));
+    tcp_bytes[19] ^= 0x01;
+    try testing.expect(!verifyChecksumV6(src_ip, dst_ip, &tcp_bytes));
 }
 
 // [smoltcp:wire/tcp.rs:SeqNumber - wrapping arithmetic]
@@ -840,4 +879,15 @@ test "malformed TCP options parsed without error" {
     // Case 6: SACK kind with length < 2
     const r6 = try parseMalformedOptions(&.{ 0x05, 0x01, 0x00, 0x00 });
     try testing.expect(r6.sack_ranges[0] == null);
+}
+
+test "TCP window scale option is bounded" {
+    const bad_len = try parseMalformedOptions(&.{ 0x03, 0x04, 0x07, 0x00 });
+    try testing.expect(bad_len.window_scale == null);
+
+    const too_large = try parseMalformedOptions(&.{ 0x03, 0x03, 0x0f, 0x00 });
+    try testing.expect(too_large.window_scale == null);
+
+    const max_valid = try parseMalformedOptions(&.{ 0x03, 0x03, 0x0e, 0x00 });
+    try testing.expectEqual(@as(?u8, 14), max_valid.window_scale);
 }

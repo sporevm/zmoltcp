@@ -110,8 +110,15 @@ pub fn parse(data: []const u8) error{ Truncated, BadLength }!Repr {
     }
 }
 
-pub fn emit(repr: Repr, buf: []u8) error{BufferTooSmall}!usize {
+pub fn emit(repr: Repr, buf: []u8) error{ BufferTooSmall, BadLength }!usize {
     const len = bufferLen(repr);
+    switch (repr) {
+        .unknown => |u| {
+            if (u.length == 0) return error.BadLength;
+            if (u.data.len != len - 2) return error.BadLength;
+        },
+        else => {},
+    }
     if (buf.len < len) return error.BufferTooSmall;
 
     switch (repr) {
@@ -237,4 +244,25 @@ test "prefix information roundtrip" {
     var buf: [32]u8 = undefined;
     _ = try emit(repr, &buf);
     try testing.expectEqualSlices(u8, &original, &buf);
+}
+
+test "unknown option emit rejects inconsistent length" {
+    var buf: [16]u8 = undefined;
+    try testing.expectError(error.BadLength, emit(.{ .unknown = .{
+        .option_type = 0xff,
+        .length = 1,
+        .data = &[_]u8{ 0, 1, 2, 3, 4, 5, 6 },
+    } }, &buf));
+    try testing.expectError(error.BadLength, emit(.{ .unknown = .{
+        .option_type = 0xff,
+        .length = 2,
+        .data = &[_]u8{ 0, 1, 2, 3 },
+    } }, &buf));
+
+    const len = try emit(.{ .unknown = .{
+        .option_type = 0xff,
+        .length = 1,
+        .data = &[_]u8{ 0, 1, 2, 3, 4, 5 },
+    } }, &buf);
+    try testing.expectEqual(@as(usize, 8), len);
 }

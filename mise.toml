@@ -1,0 +1,14 @@
+[tools]
+zig = "0.16.0"
+
+[tasks.test]
+description = "Run all unit and conformance tests"
+run = "zig build test"
+
+[tasks.cross]
+description = "Cross-compile for aarch64 freestanding"
+run = "zig build -Dtarget=aarch64-freestanding-none"
+
+[tasks.release]
+description = "Prepare a release version-bump branch and commit"
+run = "scripts/release.sh"

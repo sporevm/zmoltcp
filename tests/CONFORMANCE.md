@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 848 tests passing** (847 named + 1 root import test)
+**Total: 850 tests passing** (849 named + 1 root import test)
 
 ## Summary
 
@@ -12,7 +12,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/ethernet | 5 | 5 | 0 | 5 | PASS |
 | wire/arp | 4 | 8 | 0 | 8 | PASS |
 | wire/ip | 0 | 7 | 0 | 7 | PASS |
-| wire/ipv4 | 15 | 16 | 0 | 16 | PASS |
+| wire/ipv4 | 15 | 17 | 0 | 17 | PASS |
 | wire/tcp | 9 | 22 | 0 | 22 | PASS |
 | wire/udp | 8 | 16 | 0 | 16 | PASS |
 | wire/icmp | 5 | 6 | 0 | 6 | PASS |
@@ -49,7 +49,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/sixlowpan_frag | 0 | 9 | 0 | 9 | PASS |
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
-| stack | 2 | 114 | 0 | 114 | PASS |
+| stack | 2 | 115 | 0 | 115 | PASS |
 | **Total** | | **828** | **8** | **828** | **PASS** |
 
 ## Wire Layer Tests
@@ -106,6 +106,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/ipv4.rs:roundtrip | "IPv4 roundtrip" | PASS |
 | (original) | "IPv4 emit produces valid checksum" | PASS |
 | (original) | "IPv4 payload extraction" | PASS |
+| (original) | "IPv4 payload rejects over-declared total length" | PASS |
 | wire/ipv4.rs:test_deconstruct | "IPv4 deconstruct raw fields" | PASS |
 | wire/ipv4.rs:test_construct | "IPv4 construct with flags and frag offset" | PASS |
 | wire/ipv4.rs:test_overlong | "IPv4 overlong buffer clamped to total_len" | PASS |
@@ -1034,6 +1035,7 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "stack v6 two-fragment reassembly delivers to socket" | PASS |
 | (original) | "stack v6 extension header chain walking" | PASS |
 | (original) | "Medium::Ip IPv4 ingress echo reply" | PASS |
+| (original) | "Medium::Ip IPv4 ingress rejects bad header checksum" | PASS |
 | (original) | "Medium::Ip IPv6 ingress echo reply" | PASS |
 | (original) | "Medium::Ip IPv4 no ARP emitted" | PASS |
 | (original) | "Medium::Ip IPv6 no NDP emitted" | PASS |

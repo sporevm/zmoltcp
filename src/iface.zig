@@ -789,6 +789,9 @@ pub const Interface = struct {
     }
 
     pub fn processIpv4(self: *Interface, data: []const u8) ?Response {
+        ipv4.checkLen(data) catch return null;
+        if (!ipv4.verifyChecksum(data)) return null;
+
         const ip_repr = ipv4.parse(data) catch return null;
         const is_broadcast = self.isBroadcast(ip_repr.dst_addr);
 

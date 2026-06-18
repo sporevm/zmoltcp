@@ -359,7 +359,7 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
                         }
                     },
                     .ipv4 => {
-                        const ip_repr = ipv4.parse(payload_data) catch return;
+                        const ip_repr = parseIpv4Ingress(payload_data) orelse return;
                         if (ipv4.isBroadcast(ip_repr.src_addr) or ipv4.isMulticast(ip_repr.src_addr)) return;
                         if (!ipv4.isUnspecified(ip_repr.src_addr) and self.iface.v4.inSameNetwork(ip_repr.src_addr)) {
                             self.iface.neighbor_cache.fill(ip_repr.src_addr, eth_repr.src_addr, self.iface.now);
@@ -384,7 +384,7 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
                 const version = frame[0] >> 4;
                 switch (version) {
                     4 => {
-                        const ip_repr = ipv4.parse(frame) catch return;
+                        const ip_repr = parseIpv4Ingress(frame) orelse return;
                         if (ipv4.isBroadcast(ip_repr.src_addr) or ipv4.isMulticast(ip_repr.src_addr)) return;
                         self.processIpv4Ingress(timestamp, ip_repr, frame, device);
                     },
@@ -396,6 +396,12 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
                     else => {},
                 }
             }
+        }
+
+        fn parseIpv4Ingress(data: []const u8) ?ipv4.Repr {
+            ipv4.checkLen(data) catch return null;
+            if (device_caps.checksum.ipv4.shouldVerifyRx() and !ipv4.verifyChecksum(data)) return null;
+            return ipv4.parse(data) catch return null;
         }
 
         fn processIpv4Ingress(self: *Self, timestamp: Instant, ip_repr: ipv4.Repr, data: []const u8, device: *Device) void {
@@ -6141,6 +6147,30 @@ test "Medium::Ip IPv4 ingress echo reply" {
         },
         .other => return error.ExpectedEchoReply,
     }
+}
+
+test "Medium::Ip IPv4 ingress rejects bad header checksum" {
+    var device = TestIpDevice{};
+    var stack = testIpStack();
+
+    const echo_data = [_]u8{ 0xDE, 0xAD };
+    var icmp_buf: [icmp.HEADER_LEN + 2]u8 = undefined;
+    _ = icmp.emitEcho(.{
+        .icmp_type = .echo_request,
+        .code = 0,
+        .checksum = 0,
+        .identifier = 0x1234,
+        .sequence = 1,
+    }, &echo_data, &icmp_buf) catch unreachable;
+
+    var frame_buf: [256]u8 = undefined;
+    const frame = buildRawIpv4(&frame_buf, REMOTE_IP, LOCAL_IP, .icmp, &icmp_buf);
+    frame_buf[10] ^= 0xff;
+    device.enqueueRx(frame);
+
+    const processed = stack.poll(Instant.ZERO, &device);
+    try testing.expect(processed);
+    try testing.expectEqual(@as(?[]const u8, null), device.dequeueTx());
 }
 
 test "Medium::Ip IPv6 ingress echo reply" {

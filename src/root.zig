@@ -103,4 +103,5 @@ test {
     _ = @import("stack.zig");
     _ = @import("phy.zig");
     _ = @import("rpl.zig");
+    _ = @import("fuzz.zig");
 }

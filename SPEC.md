@@ -6,9 +6,11 @@ zmoltcp uses smoltcp (Rust no_std TCP/IP stack) as its architectural reference
 and correctness baseline. This document specifies how we validate zmoltcp
 against smoltcp's test suite to ensure protocol conformance.
 
-**Current status: 818 tests passing** across all modules. Full dual-stack
-IPv4/IPv6 feature parity with smoltcp, plus IoT (802.15.4, 6LoWPAN, RPL)
-and additional features (IPsec wire formats, PcapWriter, mDNS, PacketBuffer).
+The current deterministic conformance count is tracked in
+`tests/CONFORMANCE.md`, alongside fuzz target smoke tests and fuzz-discovered
+regression tests. zmoltcp targets full dual-stack IPv4/IPv6 feature parity
+with smoltcp, plus IoT (802.15.4, 6LoWPAN, RPL) and additional features
+(IPsec wire formats, PcapWriter, mDNS, PacketBuffer).
 
 ## Reference Material
 
@@ -126,6 +128,29 @@ The tag format is: `[smoltcp:<file>:<test_function_name>]`
 
 A tracking file `tests/CONFORMANCE.md` maps each smoltcp test to its zmoltcp
 equivalent and tracks implementation status.
+
+## Fuzz Testing Methodology
+
+Fuzzing complements conformance tests. Conformance vectors prove known
+protocol behavior; fuzz targets search for malformed inputs and unexpected
+operation orders that should fail closed instead of panicking, looping, or
+breaking length invariants.
+
+Packet-facing fuzz targets must cover these surfaces:
+
+- Raw byte parsers under `wire/`, especially variable-length options and
+  derived payload slices.
+- Public stack ingress for Ethernet, raw IP, and IEEE 802.15.4 media.
+- Fragment reassembly for IPv4, IPv6, and 6LoWPAN keys.
+- Public operation streams for storage buffers, sockets, RPL state, and PHY
+  middleware.
+
+Every fuzz harness must use bounded loops and caller-provided scratch storage.
+Production parsing paths must not gain hidden allocation to support fuzzing.
+When fuzzing finds a crash, hang, assertion, or invariant failure, add a
+deterministic regression test in the owning module before or alongside the
+fix. The operational commands and Zig 0.16.0 runner caveats live in
+`tests/FUZZING.md`.
 
 ## Test Categories
 
@@ -599,7 +624,7 @@ stack.zig (114 tests)
 | Stack integration | stack | 114 |
 | Time | time | 8 |
 | Root | root | 1 |
-| | **Total** | **818** | -- Note: Includes 26 RPL tests in rpl.zig count
+| | **Total** | See `tests/CONFORMANCE.md` |
 
 ## CI/CD Pipeline
 
@@ -607,6 +632,8 @@ stack.zig (114 tests)
 
 ```yaml
 - zig build test              # All unit + conformance tests
+- zig build demo              # End-to-end integration demos
+- zig build fuzz --fuzz=10K --test-timeout 30s  # Bounded fuzz smoke
 - zig build -Dtarget=aarch64-freestanding-none  # Cross-compile check
 ```
 
@@ -642,3 +669,7 @@ When smoltcp updates:
 - **Roundtrip test**: Parse raw bytes into a Repr, serialize the Repr back
   to bytes, verify the output matches the input. Validates that
   parse and serialize are inverses.
+
+- **Fuzz test**: A bounded malformed-input or operation-stream test that uses
+  `std.testing.fuzz`. Fuzz tests are not smoltcp conformance entries, but any
+  discovered bug should land as a deterministic regression test.

@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 846 tests passing** (845 named + 1 root import test)
+**Total: 847 tests passing** (846 named + 1 root import test)
 
 ## Summary
 
@@ -26,7 +26,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | socket/udp | 16 | 17 | 0 | 17 | PASS |
 | wire/dhcp | 9 | 9 | 0 | 9 | PASS |
 | socket/dhcp | 11 | 11 | 0 | 11 | PASS |
-| wire/dns | 7 | 7 | 0 | 7 | PASS |
+| wire/dns | 7 | 8 | 0 | 8 | PASS |
 | socket/dns | 0 | 16 | 0 | 16 | PASS |
 | socket/icmp | 6 | 7 | 0 | 7 | PASS |
 | socket/raw | 5 | 11 | 0 | 11 | PASS |
@@ -50,7 +50,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
 | stack | 2 | 114 | 0 | 114 | PASS |
-| **Total** | | **826** | **8** | **826** | **PASS** |
+| **Total** | | **827** | **8** | **827** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -209,6 +209,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | smoltcp Reference | zmoltcp Test | Status |
 |---|---|---|
 | wire/dns.rs:test_parse_name | "parse name with pointer compression" | PASS |
+| (original) | "parse name rejects out-of-range start" | PASS |
 | wire/dns.rs:test_parse_request | "parse request" | PASS |
 | wire/dns.rs:test_parse_response | "parse response single A" | PASS |
 | wire/dns.rs:test_parse_response_multiple_a | "parse response multiple A" | PASS |

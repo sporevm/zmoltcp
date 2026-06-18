@@ -22,20 +22,31 @@ const iface_mod = @import("../iface.zig");
 const readU16 = @import("../wire/checksum.zig").readU16;
 const Instant = time.Instant;
 
-// Extract transport-layer source port from an ICMPv4 error payload.
-// Payload: [embedded IPv4 header (variable IHL)][transport header fragment].
-fn embeddedSrcPort(payload: []const u8) ?u16 {
-    if (payload.len < ipv4.HEADER_LEN) return null;
-    const ihl: usize = @as(usize, payload[0] & 0x0F) * 4;
-    if (ihl < ipv4.HEADER_LEN or payload.len < ihl + 2) return null;
+// Extract the quoted UDP source port from an ICMPv4 error payload.
+// Payload: [embedded IPv4 header (variable IHL)][UDP header fragment].
+fn embeddedUdpSrcPort(payload: []const u8, bound_addr: ?ipv4.Address) ?u16 {
+    const ip_repr = ipv4.parse(payload) catch return null;
+    if (ip_repr.protocol != .udp) return null;
+    if (bound_addr) |addr| {
+        if (!std.mem.eql(u8, &addr, &ip_repr.src_addr)) return null;
+    }
+
+    const ihl: usize = @as(usize, ip_repr.ihl) * 4;
+    if (payload.len < ihl + 2) return null;
     return readU16(payload[ihl..][0..2]);
 }
 
-// Extract transport-layer source port from an ICMPv6 error payload.
-// Payload: [4 msg-specific][40 IPv6 header][transport header fragment].
-fn embeddedSrcPortV6(payload: []const u8) ?u16 {
+// Extract the quoted UDP source port from an ICMPv6 error payload.
+// Payload: [4 msg-specific][40 IPv6 header][UDP header fragment].
+fn embeddedUdpSrcPortV6(payload: []const u8, bound_addr: ?ipv6.Address) ?u16 {
     const offset = 4 + ipv6.HEADER_LEN;
     if (payload.len < offset + 2) return null;
+    const ip_repr = ipv6.parseHeader(payload[4..]) catch return null;
+    if (ip_repr.next_header != .udp) return null;
+    if (bound_addr) |addr| {
+        if (!std.mem.eql(u8, &addr, &ip_repr.src_addr)) return null;
+    }
+
     return readU16(payload[offset..][0..2]);
 }
 
@@ -208,9 +219,9 @@ pub fn Socket(comptime Ip: type) type {
                         if (!std.mem.eql(u8, &bound_addr, &dst_addr)) return false;
                     }
                     const src_port = if (comptime is_v6)
-                        embeddedSrcPortV6(payload)
+                        embeddedUdpSrcPortV6(payload, udp_ep.addr)
                     else
-                        embeddedSrcPort(payload);
+                        embeddedUdpSrcPort(payload, udp_ep.addr);
                     return (src_port orelse return false) == udp_ep.port;
                 },
             }
@@ -256,13 +267,45 @@ pub fn Socket(comptime Ip: type) type {
 const testing = std.testing;
 
 const TestSocket = Socket(ipv4);
+const TestSocketV6 = Socket(ipv6);
 
 const LOCAL_PORT: u16 = 53;
 const LOCAL_ADDR: ipv4.Address = .{ 192, 168, 1, 1 };
 const REMOTE_ADDR: ipv4.Address = .{ 192, 168, 1, 2 };
+const LOCAL_ADDR_V6: ipv6.Address = .{ 0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+const REMOTE_ADDR_V6: ipv6.Address = .{ 0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2 };
 const ECHO_IDENT: u16 = 0x1234;
 const ECHO_SEQ: u16 = 0x5678;
 const ECHO_DATA = [_]u8{0xff} ** 16;
+const EMBEDDED_UDP_ERROR_PAYLOAD = [_]u8{
+    // IPv4 header (20 bytes): version=4, IHL=5, protocol=UDP(17)
+    0x45, 0x00, 0x00, 0x1C,
+    0x00, 0x00, 0x00, 0x00,
+    0x40, 0x11, 0x00, 0x00,
+    192,  168,  1,    1,
+    192,  168,  1,    2,
+    // UDP header (8 bytes)
+    0x00, 0x35, // src_port = 53 (LOCAL_PORT)
+    0x23, 0x82, // dst_port = 9090
+    0x00, 0x12, // length = 18
+    0x00, 0x00, // checksum
+};
+const EMBEDDED_UDP_ERROR_PAYLOAD_V6 = [_]u8{
+    // ICMPv6 error body header
+    0x00, 0x00, 0x00, 0x00,
+    // IPv6 header: payload_len=8, next_header=UDP(17), hop_limit=64
+    0x60, 0x00, 0x00, 0x00,
+    0x00, 0x08,
+    0x11,
+    0x40,
+    0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2,
+    // UDP header
+    0x00, 0x35,
+    0x23, 0x82,
+    0x00, 0x08,
+    0x00, 0x00,
+};
 
 fn makeSocket(
     comptime rx_meta_n: usize,
@@ -281,6 +324,25 @@ fn makeSocket(
     S.tx_meta = .{TestSocket.PacketMeta{}} ** tx_meta_n;
     S.tx_payload = .{0} ** tx_payload_n;
     return TestSocket.init(&S.rx_meta, &S.rx_payload, &S.tx_meta, &S.tx_payload);
+}
+
+fn makeSocketV6(
+    comptime rx_meta_n: usize,
+    comptime rx_payload_n: usize,
+    comptime tx_meta_n: usize,
+    comptime tx_payload_n: usize,
+) TestSocketV6 {
+    const S = struct {
+        var rx_meta: [rx_meta_n]TestSocketV6.PacketMeta = .{TestSocketV6.PacketMeta{}} ** rx_meta_n;
+        var rx_payload: [rx_payload_n]u8 = .{0} ** rx_payload_n;
+        var tx_meta: [tx_meta_n]TestSocketV6.PacketMeta = .{TestSocketV6.PacketMeta{}} ** tx_meta_n;
+        var tx_payload: [tx_payload_n]u8 = .{0} ** tx_payload_n;
+    };
+    S.rx_meta = .{TestSocketV6.PacketMeta{}} ** rx_meta_n;
+    S.rx_payload = .{0} ** rx_payload_n;
+    S.tx_meta = .{TestSocketV6.PacketMeta{}} ** tx_meta_n;
+    S.tx_payload = .{0} ** tx_payload_n;
+    return TestSocketV6.init(&S.rx_meta, &S.rx_payload, &S.tx_meta, &S.tx_payload);
 }
 
 fn buildEchoPacket(buf: []u8) []const u8 {
@@ -401,19 +463,7 @@ test "accepts ICMP error for bound UDP port" {
     try s.bind(.{ .udp = .{ .addr = LOCAL_ADDR, .port = LOCAL_PORT } });
 
     // Construct payload of an ICMP DstUnreachable: embedded IPv4 header + UDP header.
-    const embedded_payload = [_]u8{
-        // IPv4 header (20 bytes): version=4, IHL=5, protocol=UDP(17)
-        0x45, 0x00, 0x00, 0x1C,
-        0x00, 0x00, 0x00, 0x00,
-        0x40, 0x11, 0x00, 0x00,
-        192,  168,  1,    1,
-        192,  168,  1,    2,
-        // UDP header (8 bytes)
-        0x00, 0x35, // src_port = 53 (LOCAL_PORT)
-        0x23, 0x82, // dst_port = 9090
-        0x00, 0x12, // length = 18
-        0x00, 0x00, // checksum
-    };
+    const embedded_payload = EMBEDDED_UDP_ERROR_PAYLOAD;
 
     const icmp_repr = icmp.Repr{ .other = .{
         .icmp_type = .dest_unreachable,
@@ -437,6 +487,66 @@ test "accepts ICMP error for bound UDP port" {
     try testing.expectEqualSlices(u8, expected_buf[0..expected_len], recv_buf[0..result.data_len]);
     try testing.expectEqualSlices(u8, &REMOTE_ADDR, &result.src_addr);
     try testing.expect(!s.canRecv());
+}
+
+test "rejects ICMP UDP error with non-UDP embedded protocol" {
+    var s = makeSocket(1, 128, 1, 64);
+    try s.bind(.{ .udp = .{ .addr = LOCAL_ADDR, .port = LOCAL_PORT } });
+
+    var embedded_payload = EMBEDDED_UDP_ERROR_PAYLOAD;
+    embedded_payload[9] = @intFromEnum(ipv4.Protocol.tcp);
+
+    const icmp_repr = icmp.Repr{ .other = .{
+        .icmp_type = .dest_unreachable,
+        .code = 3,
+        .checksum = 0,
+        .data = 0,
+    } };
+
+    try testing.expect(!s.accepts(REMOTE_ADDR, LOCAL_ADDR, icmp_repr, &embedded_payload));
+}
+
+test "rejects ICMP UDP error with wrong embedded local address" {
+    var s = makeSocket(1, 128, 1, 64);
+    try s.bind(.{ .udp = .{ .addr = LOCAL_ADDR, .port = LOCAL_PORT } });
+
+    var embedded_payload = EMBEDDED_UDP_ERROR_PAYLOAD;
+    embedded_payload[12] = 192;
+    embedded_payload[13] = 168;
+    embedded_payload[14] = 1;
+    embedded_payload[15] = 200;
+
+    const icmp_repr = icmp.Repr{ .other = .{
+        .icmp_type = .dest_unreachable,
+        .code = 3,
+        .checksum = 0,
+        .data = 0,
+    } };
+
+    try testing.expect(!s.accepts(REMOTE_ADDR, LOCAL_ADDR, icmp_repr, &embedded_payload));
+}
+
+test "rejects ICMPv6 UDP error with non-UDP embedded header" {
+    var s = makeSocketV6(1, 128, 1, 64);
+    try s.bind(.{ .udp = .{ .addr = LOCAL_ADDR_V6, .port = LOCAL_PORT } });
+
+    var embedded_payload = EMBEDDED_UDP_ERROR_PAYLOAD_V6;
+    embedded_payload[4 + 6] = @intFromEnum(ipv6.Protocol.tcp);
+
+    const inner_header = ipv6.Repr{
+        .src_addr = LOCAL_ADDR_V6,
+        .dst_addr = REMOTE_ADDR_V6,
+        .next_header = .tcp,
+        .payload_len = 8,
+        .hop_limit = 64,
+    };
+    const icmp_repr = icmpv6_wire.Repr{ .dst_unreachable = .{
+        .reason = .port_unreachable,
+        .header = inner_header,
+        .data = embedded_payload[4 + ipv6.HEADER_LEN ..],
+    } };
+
+    try testing.expect(!s.accepts(REMOTE_ADDR_V6, LOCAL_ADDR_V6, icmp_repr, &embedded_payload));
 }
 
 // (original)

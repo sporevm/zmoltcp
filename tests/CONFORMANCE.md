@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 853 tests passing** (852 named + 1 root import test)
+**Total: 856 tests passing** (855 named + 1 root import test)
 
 ## Summary
 
@@ -28,7 +28,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | socket/dhcp | 11 | 11 | 0 | 11 | PASS |
 | wire/dns | 7 | 8 | 0 | 8 | PASS |
 | socket/dns | 0 | 16 | 0 | 16 | PASS |
-| socket/icmp | 6 | 7 | 0 | 7 | PASS |
+| socket/icmp | 6 | 10 | 0 | 10 | PASS |
 | socket/raw | 5 | 11 | 0 | 11 | PASS |
 | wire/igmp | 4 | 8 | 0 | 8 | PASS |
 | wire/ipv6 | 12 | 12 | 0 | 12 | PASS |
@@ -50,7 +50,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
 | stack | 2 | 117 | 0 | 117 | PASS |
-| **Total** | | **833** | **8** | **833** | **PASS** |
+| **Total** | | **836** | **8** | **836** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -802,6 +802,9 @@ were never actually run despite being listed here. The test module runs with
 | socket/icmp.rs:test_recv_process | "process inbound and recv" | PASS |
 | socket/icmp.rs:test_accept_bad_id | "rejects packet with wrong identifier" | PASS |
 | socket/icmp.rs:test_accepts_udp | "accepts ICMP error for bound UDP port" | PASS |
+| (original) | "rejects ICMP UDP error with non-UDP embedded protocol" | PASS |
+| (original) | "rejects ICMP UDP error with wrong embedded local address" | PASS |
+| (original) | "rejects ICMPv6 UDP error with non-UDP embedded header" | PASS |
 | (original) | "pollAt returns ZERO when tx queued, null when empty" | PASS |
 
 ### socket/raw.zig

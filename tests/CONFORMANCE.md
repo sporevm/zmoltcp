@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 825 tests passing** (824 named + 1 root import test)
+**Total: 826 tests passing** (825 named + 1 root import test)
 
 ## Summary
 
@@ -17,7 +17,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/udp | 8 | 11 | 0 | 11 | PASS |
 | wire/icmp | 5 | 5 | 0 | 5 | PASS |
 | wire/ipsec_esp | 6 | 6 | 0 | 6 | PASS |
-| wire/ipsec_ah | 6 | 6 | 0 | 6 | PASS |
+| wire/ipsec_ah | 6 | 7 | 0 | 7 | PASS |
 | storage/ring_buffer | 15 | 14 | 1 | 14 | PASS |
 | storage/assembler | 38 | 37 | 1 | 37 | PASS |
 | storage/packet_buffer | 10 | 12 | 0 | 12 | PASS |
@@ -50,7 +50,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
 | stack | 2 | 114 | 0 | 114 | PASS |
-| **Total** | | **817** | **8** | **817** | **PASS** |
+| **Total** | | **818** | **8** | **818** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -181,6 +181,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/ipsec_ah.rs:test_emit | "AH emit repr" | PASS |
 | wire/ipsec_ah.rs:test_header_len | "AH header length from wire" | PASS |
 | wire/ipsec_ah.rs:test_check_len | "AH truncated packet rejected" | PASS |
+| (regression) | "AH rejects payload length below minimum header size" | PASS |
 | (original) | "AH roundtrip parse then emit" | PASS |
 
 ### wire/dhcp.zig

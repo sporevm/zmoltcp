@@ -18,6 +18,7 @@ pub fn parse(data: []const u8) error{Truncated}!Repr {
     if (data.len < MIN_HEADER_LEN) return error.Truncated;
     const payload_len = data[1];
     const total = headerLen(data);
+    if (total < MIN_HEADER_LEN) return error.Truncated;
     if (data.len < total) return error.Truncated;
     return .{
         .next_header = @enumFromInt(data[0]),
@@ -109,6 +110,13 @@ test "AH parse rejects truncated buffers" {
     try testing.expectError(error.Truncated, parse(PACKET_BYTES1[0..10]));
     try testing.expectError(error.Truncated, parse(PACKET_BYTES1[0..22]));
     _ = try parse(&PACKET_BYTES1);
+}
+
+test "AH parse rejects payload length below minimum header size" {
+    var packet: [MIN_HEADER_LEN]u8 = .{0} ** MIN_HEADER_LEN;
+    packet[0] = @intFromEnum(ipv4.Protocol.ipsec_esp);
+    packet[1] = 0;
+    try testing.expectError(error.Truncated, parse(&packet));
 }
 
 // [smoltcp:wire/ipsec_ah.rs:test_parse]

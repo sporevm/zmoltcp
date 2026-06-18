@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 851 tests passing** (850 named + 1 root import test)
+**Total: 853 tests passing** (852 named + 1 root import test)
 
 ## Summary
 
@@ -49,8 +49,8 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/sixlowpan_frag | 0 | 9 | 0 | 9 | PASS |
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
-| stack | 2 | 115 | 0 | 115 | PASS |
-| **Total** | | **831** | **8** | **831** | **PASS** |
+| stack | 2 | 117 | 0 | 117 | PASS |
+| **Total** | | **833** | **8** | **833** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -1049,6 +1049,8 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "Medium::Ip IPv4 fragmented ingress" | PASS |
 | (original) | "802.15.4 stack compiles and initializes" | PASS |
 | (original) | "802.15.4 IPHC ingress: ICMPv6 echo request produces reply" | PASS |
+| (original) | "802.15.4 drops oversized 6LoWPAN first fragment" | PASS |
+| (original) | "802.15.4 drops 6LoWPAN fragment past datagram size" | PASS |
 | (original) | "802.15.4 PAN ID filtering drops wrong PAN" | PASS |
 | (original) | "802.15.4 non-data frame is dropped" | PASS |
 

@@ -612,10 +612,12 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             const total = ipv6.HEADER_LEN + payload_len;
             if (total > self.sixlowpan_decompress_buf.len) return null;
 
-            const ipv6_payload_len: u16 = if (total_uncompressed_len) |tul|
-                tul - @as(u16, @intCast(ipv6.HEADER_LEN))
-            else
-                @intCast(payload_len);
+            const ipv6_payload_len: u16 = if (total_uncompressed_len) |tul| blk: {
+                const total_len = @as(usize, tul);
+                if (total_len < ipv6.HEADER_LEN or total_len > self.sixlowpan_decompress_buf.len) return null;
+                if (total > total_len) return null;
+                break :blk @intCast(total_len - ipv6.HEADER_LEN);
+            } else @intCast(payload_len);
 
             _ = ipv6.emit(.{
                 .payload_len = ipv6_payload_len,
@@ -633,6 +635,17 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             return self.sixlowpan_decompress_buf[0..total];
         }
 
+        fn sixlowpanDatagramSizeFits(datagram_size: u16) bool {
+            const size = @as(usize, datagram_size);
+            return size >= ipv6.HEADER_LEN and size <= REASSEMBLY_BUFFER_SIZE;
+        }
+
+        fn sixlowpanFragmentRangeFits(datagram_size: u16, byte_offset: usize, payload_len: usize) bool {
+            const size = @as(usize, datagram_size);
+            if (byte_offset > size) return false;
+            return payload_len <= size - byte_offset;
+        }
+
         fn processSixlowpanFragment(self: *Self, timestamp: Instant, mac_repr: ieee802154.Repr, payload: []const u8, device: *Device) void {
             const frag_repr = sixlowpan_frag.parse(payload) catch return;
             const frag_payload = sixlowpan_frag.payloadSlice(payload) catch return;
@@ -641,17 +654,23 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
                 inline .first_fragment, .next_fragment => |f| .{ .tag = f.datagram_tag, .size = f.datagram_size },
             };
 
+            if (!sixlowpanDatagramSizeFits(common.size)) return;
+
             const key = frag_mod.FragKey6LoWPAN.fromAddrs(mac_repr.src_addr, mac_repr.dst_addr, common.tag, common.size);
-            self.reassembler_6lowpan.accept(key, timestamp.add(self.reassembly_timeout));
 
             switch (frag_repr) {
                 .first_fragment => |f| {
-                    self.reassembler_6lowpan.setTotalSize(f.datagram_size);
                     const decompressed = self.sixlowpanToIpv6(mac_repr, frag_payload, f.datagram_size) orelse return;
+                    if (!sixlowpanFragmentRangeFits(f.datagram_size, 0, decompressed.len)) return;
+                    self.reassembler_6lowpan.accept(key, timestamp.add(self.reassembly_timeout));
+                    self.reassembler_6lowpan.setTotalSize(f.datagram_size);
                     _ = self.reassembler_6lowpan.add(decompressed, 0);
                 },
                 .next_fragment => |f| {
-                    _ = self.reassembler_6lowpan.add(frag_payload, @as(usize, f.datagram_offset) * 8);
+                    const byte_offset = @as(usize, f.datagram_offset) * 8;
+                    if (!sixlowpanFragmentRangeFits(f.datagram_size, byte_offset, frag_payload.len)) return;
+                    self.reassembler_6lowpan.accept(key, timestamp.add(self.reassembly_timeout));
+                    _ = self.reassembler_6lowpan.add(frag_payload, byte_offset);
                 },
             }
 
@@ -6632,6 +6651,17 @@ fn buildIeee802154Frame(
     return buf[0 .. mac_len + payload.len];
 }
 
+fn buildTestIphcHeader(buf: []u8) usize {
+    const src_ll = ieee802154.Address{ .extended = TEST_SRC_EXT };
+    const dst_ll = ieee802154.Address{ .extended = TEST_DST_EXT };
+    return sixlowpan.emitIphc(.{
+        .src_addr = src_ll.asLinkLocalAddress(),
+        .dst_addr = dst_ll.asLinkLocalAddress(),
+        .next_header = .{ .uncompressed = .icmpv6 },
+        .hop_limit = 64,
+    }, src_ll, dst_ll, buf) catch unreachable;
+}
+
 test "802.15.4 stack compiles and initializes" {
     var device = Test802154Device.init();
     var stack = test802154Stack();
@@ -6702,6 +6732,63 @@ test "802.15.4 IPHC ingress: ICMPv6 echo request produces reply" {
     const icmpv6_reply = tx_payload[parsed.consumed..];
     try testing.expect(icmpv6_reply.len >= 8);
     try testing.expectEqual(@as(u8, 129), icmpv6_reply[0]);
+}
+
+test "802.15.4 drops oversized 6LoWPAN first fragment" {
+    var device = Test802154Device.init();
+    var stack = test802154Stack();
+
+    var payload_buf: [128]u8 = undefined;
+    const frag_len = sixlowpan_frag.emit(.{ .first_fragment = .{
+        .datagram_size = 1501,
+        .datagram_tag = 0x1234,
+    } }, &payload_buf) catch unreachable;
+    const iphc_len = buildTestIphcHeader(payload_buf[frag_len..]);
+    const payload_len = frag_len + iphc_len;
+
+    var frame_buf: [ieee802154.MAX_FRAME_LEN]u8 = undefined;
+    const frame = buildIeee802154Frame(
+        &frame_buf,
+        TEST_SRC_EXT,
+        TEST_DST_EXT,
+        TEST_PAN_ID,
+        2,
+        payload_buf[0..payload_len],
+    );
+
+    device.enqueueRx(frame);
+    try testing.expect(stack.poll(Instant.ZERO, &device));
+    try testing.expect(stack.reassembler_6lowpan.key == null);
+    try testing.expectEqual(@as(?[]const u8, null), device.dequeueTx());
+}
+
+test "802.15.4 drops 6LoWPAN fragment past datagram size" {
+    var device = Test802154Device.init();
+    var stack = test802154Stack();
+
+    var payload_buf: [128]u8 = undefined;
+    const frag_len = sixlowpan_frag.emit(.{ .next_fragment = .{
+        .datagram_size = 80,
+        .datagram_tag = 0x1234,
+        .datagram_offset = 10,
+    } }, &payload_buf) catch unreachable;
+    payload_buf[frag_len] = 0xaa;
+    const payload_len = frag_len + 1;
+
+    var frame_buf: [ieee802154.MAX_FRAME_LEN]u8 = undefined;
+    const frame = buildIeee802154Frame(
+        &frame_buf,
+        TEST_SRC_EXT,
+        TEST_DST_EXT,
+        TEST_PAN_ID,
+        3,
+        payload_buf[0..payload_len],
+    );
+
+    device.enqueueRx(frame);
+    try testing.expect(stack.poll(Instant.ZERO, &device));
+    try testing.expect(stack.reassembler_6lowpan.key == null);
+    try testing.expectEqual(@as(?[]const u8, null), device.dequeueTx());
 }
 
 test "802.15.4 PAN ID filtering drops wrong PAN" {

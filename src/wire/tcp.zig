@@ -7,6 +7,7 @@ const checksum = @import("checksum.zig");
 
 pub const HEADER_LEN = 20; // Minimum (no options)
 pub const MAX_HEADER_LEN = 60; // data_offset=15 * 4
+pub const MAX_WINDOW_SCALE = 14;
 
 // -------------------------------------------------------------------------
 // Sequence Number (modular 2^32 arithmetic)
@@ -217,19 +218,27 @@ fn parseOptions(options: []const u8, repr: *Repr) void {
                 continue;
             },
             .mss => {
-                if (i + 4 > options.len) return;
+                if (i + 1 >= options.len) return;
+                const opt_len = options[i + 1];
+                if (opt_len != 4 or i + opt_len > options.len) return;
                 repr.max_seg_size = @as(u16, options[i + 2]) << 8 | @as(u16, options[i + 3]);
-                i += 4;
+                i += opt_len;
             },
             .window_scale => {
-                if (i + 3 > options.len) return;
-                repr.window_scale = options[i + 2];
-                i += 3;
+                if (i + 1 >= options.len) return;
+                const opt_len = options[i + 1];
+                if (opt_len != 3 or i + opt_len > options.len) return;
+                const scale = options[i + 2];
+                if (scale > MAX_WINDOW_SCALE) return;
+                repr.window_scale = scale;
+                i += opt_len;
             },
             .sack_permitted => {
-                if (i + 2 > options.len) return;
+                if (i + 1 >= options.len) return;
+                const opt_len = options[i + 1];
+                if (opt_len != 2 or i + opt_len > options.len) return;
                 repr.sack_permitted = true;
-                i += 2;
+                i += opt_len;
             },
             .sack => {
                 if (i + 1 >= options.len) return;
@@ -840,4 +849,15 @@ test "malformed TCP options parsed without error" {
     // Case 6: SACK kind with length < 2
     const r6 = try parseMalformedOptions(&.{ 0x05, 0x01, 0x00, 0x00 });
     try testing.expect(r6.sack_ranges[0] == null);
+}
+
+test "TCP window scale option is bounded" {
+    const bad_len = try parseMalformedOptions(&.{ 0x03, 0x04, 0x07, 0x00 });
+    try testing.expect(bad_len.window_scale == null);
+
+    const too_large = try parseMalformedOptions(&.{ 0x03, 0x03, 0x0f, 0x00 });
+    try testing.expect(too_large.window_scale == null);
+
+    const max_valid = try parseMalformedOptions(&.{ 0x03, 0x03, 0x0e, 0x00 });
+    try testing.expectEqual(@as(?u8, 14), max_valid.window_scale);
 }

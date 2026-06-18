@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 850 tests passing** (849 named + 1 root import test)
+**Total: 851 tests passing** (850 named + 1 root import test)
 
 ## Summary
 
@@ -13,7 +13,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/arp | 4 | 8 | 0 | 8 | PASS |
 | wire/ip | 0 | 7 | 0 | 7 | PASS |
 | wire/ipv4 | 15 | 17 | 0 | 17 | PASS |
-| wire/tcp | 9 | 22 | 0 | 22 | PASS |
+| wire/tcp | 9 | 23 | 0 | 23 | PASS |
 | wire/udp | 8 | 16 | 0 | 16 | PASS |
 | wire/icmp | 5 | 6 | 0 | 6 | PASS |
 | wire/ipsec_esp | 6 | 6 | 0 | 6 | PASS |
@@ -50,7 +50,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
 | stack | 2 | 115 | 0 | 115 | PASS |
-| **Total** | | **828** | **8** | **828** | **PASS** |
+| **Total** | | **831** | **8** | **831** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -142,6 +142,7 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | (original) | "SACK range parse and emit roundtrip" | PASS |
 | (original) | "SYN options MSS + WindowScale + SackPermitted roundtrip" | PASS |
 | wire/tcp.rs:test_malformed_tcp_options | "malformed TCP options parsed without error" | PASS |
+| (original) | "TCP window scale option is bounded" | PASS |
 
 ### wire/udp.zig
 | smoltcp Reference | zmoltcp Test | Status |

@@ -138,6 +138,11 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
         const Self = @This();
 
         const EmitResult = enum { sent, neighbor_pending };
+        const UdpIngress = struct {
+            wire_repr: udp_wire.Repr,
+            datagram: []const u8,
+            payload: []const u8,
+        };
         pub const DEFAULT_REASSEMBLY_TIMEOUT = time.Duration.fromSecs(60);
 
         iface: iface_mod.Interface,
@@ -441,10 +446,11 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
                     }
                 },
                 .udp => {
-                    if (self.routeToDhcpSockets(timestamp, ip_repr, ip_payload)) return;
-                    var handled = self.routeToUdpSockets(ip_repr, ip_payload);
-                    if (!handled) handled = self.routeToDnsSockets(ip_payload);
-                    if (self.iface.processUdp(ip_repr, ip_payload, handled)) |response| {
+                    const udp_ingress = parseUdp4Ingress(ip_repr, ip_payload) orelse return;
+                    if (self.routeToDhcpSockets(timestamp, ip_repr, udp_ingress)) return;
+                    var handled = self.routeToUdpSockets(ip_repr, udp_ingress);
+                    if (!handled) handled = self.routeToDnsSockets(udp_ingress);
+                    if (self.iface.processUdp(ip_repr, udp_ingress.datagram, handled)) |response| {
                         self.emitResponse(response, device);
                     }
                 },
@@ -701,9 +707,10 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
                     }
                 },
                 .udp => {
-                    var handled = self.routeToUdpV6Sockets(ip_repr, ip_payload);
-                    if (!handled) handled = self.routeToDnsV6Sockets(ip_payload);
-                    if (self.iface.processUdpV6(ip_repr, ip_payload, handled)) |response| {
+                    const udp_ingress = parseUdp6Ingress(ip_repr, ip_payload) orelse return;
+                    var handled = self.routeToUdpV6Sockets(ip_repr, udp_ingress);
+                    if (!handled) handled = self.routeToDnsV6Sockets(udp_ingress);
+                    if (self.iface.processUdpV6(ip_repr, udp_ingress.datagram, handled)) |response| {
                         self.emitResponse(response, device);
                     }
                 },
@@ -807,20 +814,31 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             return .handled;
         }
 
-        fn routeToUdpSockets(self: *Self, ip_repr: ipv4.Repr, raw_udp: []const u8) bool {
+        fn parseUdp4Ingress(ip_repr: ipv4.Repr, raw_udp: []const u8) ?UdpIngress {
+            const wire_repr = udp_wire.parse(raw_udp) catch return null;
+            const payload = udp_wire.payloadSlice(raw_udp) catch return null;
+            if (device_caps.checksum.udp.shouldVerifyRx() and
+                !udp_wire.verifyChecksum(raw_udp, ip_repr.src_addr, ip_repr.dst_addr)) return null;
+
+            return .{
+                .wire_repr = wire_repr,
+                .datagram = raw_udp[0..@as(usize, wire_repr.length)],
+                .payload = payload,
+            };
+        }
+
+        fn routeToUdpSockets(self: *Self, ip_repr: ipv4.Repr, udp_ingress: UdpIngress) bool {
             if (comptime !has_udp4) return false;
 
-            const wire_repr = udp_wire.parse(raw_udp) catch return false;
-            const payload = udp_wire.payloadSlice(raw_udp) catch return false;
             const sock_repr = udp_socket_mod.UdpRepr{
-                .src_port = wire_repr.src_port,
-                .dst_port = wire_repr.dst_port,
+                .src_port = udp_ingress.wire_repr.src_port,
+                .dst_port = udp_ingress.wire_repr.dst_port,
             };
 
             var handled = false;
             for (self.sockets.udp4_sockets) |sock| {
                 if (sock.accepts(ip_repr.src_addr, ip_repr.dst_addr, sock_repr)) {
-                    sock.process(ip_repr.src_addr, ip_repr.dst_addr, sock_repr, payload);
+                    sock.process(ip_repr.src_addr, ip_repr.dst_addr, sock_repr, udp_ingress.payload);
                     handled = true;
                 }
             }
@@ -843,15 +861,14 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             }
         }
 
-        fn routeToDhcpSockets(self: *Self, timestamp: Instant, ip_repr: ipv4.Repr, raw_udp: []const u8) bool {
+        fn routeToDhcpSockets(self: *Self, timestamp: Instant, ip_repr: ipv4.Repr, udp_ingress: UdpIngress) bool {
             if (comptime !has_dhcp) return false;
 
-            const wire_repr = udp_wire.parse(raw_udp) catch return false;
-            const payload = udp_wire.payloadSlice(raw_udp) catch return false;
-
             for (self.sockets.dhcp_sockets) |sock| {
-                if (wire_repr.dst_port == sock.client_port and wire_repr.src_port == sock.server_port) {
-                    const dhcp_repr = dhcp_wire.parse(payload) catch return false;
+                if (udp_ingress.wire_repr.dst_port == sock.client_port and
+                    udp_ingress.wire_repr.src_port == sock.server_port)
+                {
+                    const dhcp_repr = dhcp_wire.parse(udp_ingress.payload) catch return false;
                     sock.process(timestamp, ip_repr.src_addr, dhcp_repr);
                     return true;
                 }
@@ -859,15 +876,14 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             return false;
         }
 
-        fn routeToDnsSockets(self: *Self, raw_udp: []const u8) bool {
+        fn routeToDnsSockets(self: *Self, udp_ingress: UdpIngress) bool {
             if (comptime !has_dns4) return false;
 
-            const wire_repr = udp_wire.parse(raw_udp) catch return false;
-            if (wire_repr.src_port != dns_socket_mod.DNS_PORT and wire_repr.src_port != dns_socket_mod.MDNS_PORT) return false;
-            const payload = udp_wire.payloadSlice(raw_udp) catch return false;
+            if (udp_ingress.wire_repr.src_port != dns_socket_mod.DNS_PORT and
+                udp_ingress.wire_repr.src_port != dns_socket_mod.MDNS_PORT) return false;
 
             for (self.sockets.dns4_sockets) |sock| {
-                sock.process(wire_repr.dst_port, payload);
+                sock.process(udp_ingress.wire_repr.dst_port, udp_ingress.payload);
             }
             return true;
         }
@@ -931,20 +947,30 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             return .{};
         }
 
-        fn routeToUdpV6Sockets(self: *Self, ip_repr: ipv6.Repr, raw_udp: []const u8) bool {
+        fn parseUdp6Ingress(ip_repr: ipv6.Repr, raw_udp: []const u8) ?UdpIngress {
+            const wire_repr = udp_wire.parse(raw_udp) catch return null;
+            const payload = udp_wire.payloadSlice(raw_udp) catch return null;
+            if (!udp_wire.verifyChecksumV6(raw_udp, ip_repr.src_addr, ip_repr.dst_addr)) return null;
+
+            return .{
+                .wire_repr = wire_repr,
+                .datagram = raw_udp[0..@as(usize, wire_repr.length)],
+                .payload = payload,
+            };
+        }
+
+        fn routeToUdpV6Sockets(self: *Self, ip_repr: ipv6.Repr, udp_ingress: UdpIngress) bool {
             if (comptime !has_udp6) return false;
 
-            const wire_repr = udp_wire.parse(raw_udp) catch return false;
-            const payload = udp_wire.payloadSlice(raw_udp) catch return false;
             const sock_repr = udp_socket_mod.UdpRepr{
-                .src_port = wire_repr.src_port,
-                .dst_port = wire_repr.dst_port,
+                .src_port = udp_ingress.wire_repr.src_port,
+                .dst_port = udp_ingress.wire_repr.dst_port,
             };
 
             var handled = false;
             for (self.sockets.udp6_sockets) |sock| {
                 if (sock.accepts(ip_repr.src_addr, ip_repr.dst_addr, sock_repr)) {
-                    sock.process(ip_repr.src_addr, ip_repr.dst_addr, sock_repr, payload);
+                    sock.process(ip_repr.src_addr, ip_repr.dst_addr, sock_repr, udp_ingress.payload);
                     handled = true;
                 }
             }
@@ -967,15 +993,14 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             }
         }
 
-        fn routeToDnsV6Sockets(self: *Self, raw_udp: []const u8) bool {
+        fn routeToDnsV6Sockets(self: *Self, udp_ingress: UdpIngress) bool {
             if (comptime !has_dns6) return false;
 
-            const wire_repr = udp_wire.parse(raw_udp) catch return false;
-            if (wire_repr.src_port != dns_socket_mod.DNS_PORT and wire_repr.src_port != dns_socket_mod.MDNS_PORT) return false;
-            const payload = udp_wire.payloadSlice(raw_udp) catch return false;
+            if (udp_ingress.wire_repr.src_port != dns_socket_mod.DNS_PORT and
+                udp_ingress.wire_repr.src_port != dns_socket_mod.MDNS_PORT) return false;
 
             for (self.sockets.dns6_sockets) |sock| {
-                sock.process(wire_repr.dst_port, payload);
+                sock.process(udp_ingress.wire_repr.dst_port, udp_ingress.payload);
             }
             return true;
         }
@@ -4540,6 +4565,7 @@ test "stack v6 UDP port unreachable" {
         .checksum = 0,
     }, &udp_buf) catch unreachable;
     @memcpy(udp_buf[udp_wire.HEADER_LEN..][0..4], &[_]u8{ 0xDE, 0xAD, 0xBE, 0xEF });
+    udp_wire.fillChecksumV6(&udp_buf, REMOTE_V6, LOCAL_V6);
 
     var req_buf: [256]u8 = undefined;
     const frame = buildIpv6Frame(&req_buf, .udp, &udp_buf);
@@ -5478,6 +5504,42 @@ test "stack v6 UDP socket receives datagram" {
     try testing.expectEqual(@as(?[]const u8, null), device.dequeueTx());
 }
 
+test "stack v6 UDP socket rejects zero checksum" {
+    const UdpSock = udp_socket_mod.Socket(ipv6);
+    const Sockets = struct { udp6_sockets: []*UdpSock };
+    const V6Stack = Stack(TestDevice, Sockets);
+
+    var device = TestDevice.init();
+
+    var rx_meta: [1]UdpSock.PacketMeta = .{.{}};
+    var rx_payload: [64]u8 = undefined;
+    var tx_meta: [1]UdpSock.PacketMeta = .{.{}};
+    var tx_payload: [64]u8 = undefined;
+    var sock = UdpSock.init(&rx_meta, &rx_payload, &tx_meta, &tx_payload);
+    try sock.bind(.{ .port = 5000 });
+
+    var sock_arr = [_]*UdpSock{&sock};
+    var stack = V6Stack.init(LOCAL_HW, .{ .udp6_sockets = &sock_arr });
+    stack.iface.setIpv6Addrs(&.{.{ .address = LOCAL_V6, .prefix_len = 64 }});
+
+    const udp_payload = [_]u8{ 0x48, 0x65 };
+    var raw_udp: [udp_wire.HEADER_LEN + 2]u8 = undefined;
+    _ = udp_wire.emit(.{
+        .src_port = 4000,
+        .dst_port = 5000,
+        .length = @intCast(udp_wire.HEADER_LEN + udp_payload.len),
+        .checksum = 0,
+    }, &raw_udp) catch unreachable;
+    @memcpy(raw_udp[udp_wire.HEADER_LEN..], &udp_payload);
+
+    var frame_buf: [256]u8 = undefined;
+    device.enqueueRx(buildIpv6Frame(&frame_buf, .udp, &raw_udp));
+    _ = stack.poll(Instant.ZERO, &device);
+
+    try testing.expect(!sock.canRecv());
+    try testing.expectEqual(@as(?[]const u8, null), device.dequeueTx());
+}
+
 test "stack v6 TCP socket receives SYN, replies SYN-ACK" {
     const TcpSock = tcp_socket.Socket(ipv6, 4);
     const Sockets = struct { tcp6_sockets: []*TcpSock };
@@ -6408,6 +6470,43 @@ test "Medium::Ip UDP socket roundtrip" {
     const recv = try sock.recvSlice(&recv_buf);
     try testing.expectEqualSlices(u8, &udp_payload, recv_buf[0..recv.data_len]);
 
+    try testing.expectEqual(@as(?[]const u8, null), device.dequeueTx());
+}
+
+test "Medium::Ip UDP socket rejects bad checksum" {
+    const UdpSock = udp_socket_mod.Socket(ipv4);
+    const Sockets = struct { udp4_sockets: []*UdpSock };
+    const IpUdpStack = Stack(TestIpDevice, Sockets);
+
+    var device = TestIpDevice{};
+
+    var rx_meta: [1]UdpSock.PacketMeta = .{.{}};
+    var rx_payload: [64]u8 = undefined;
+    var tx_meta: [1]UdpSock.PacketMeta = .{.{}};
+    var tx_payload: [64]u8 = undefined;
+    var sock = UdpSock.init(&rx_meta, &rx_payload, &tx_meta, &tx_payload);
+    try sock.bind(.{ .port = 5000 });
+
+    var sock_arr = [_]*UdpSock{&sock};
+    var stack = IpUdpStack.init(LOCAL_HW, .{ .udp4_sockets = &sock_arr });
+    stack.iface.v4.addIpAddr(.{ .address = LOCAL_IP, .prefix_len = 24 });
+
+    const udp_payload = [_]u8{ 0x48, 0x65 };
+    var raw_udp: [udp_wire.HEADER_LEN + 2]u8 = undefined;
+    _ = udp_wire.emit(.{
+        .src_port = 6000,
+        .dst_port = 5000,
+        .length = @intCast(udp_wire.HEADER_LEN + udp_payload.len),
+        .checksum = 0x1234,
+    }, &raw_udp) catch unreachable;
+    @memcpy(raw_udp[udp_wire.HEADER_LEN..], &udp_payload);
+
+    var frame_buf: [256]u8 = undefined;
+    const frame = buildRawIpv4(&frame_buf, REMOTE_IP, LOCAL_IP, .udp, &raw_udp);
+    device.enqueueRx(frame);
+    _ = stack.poll(Instant.ZERO, &device);
+
+    try testing.expect(!sock.canRecv());
     try testing.expectEqual(@as(?[]const u8, null), device.dequeueTx());
 }
 

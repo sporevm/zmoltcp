@@ -2,7 +2,7 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 856 tests passing** (855 named + 1 root import test)
+**Total: 858 tests passing** (857 named + 1 root import test)
 
 ## Summary
 
@@ -49,8 +49,8 @@ Tracks zmoltcp tests against their smoltcp reference implementations.
 | wire/sixlowpan_frag | 0 | 9 | 0 | 9 | PASS |
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
-| stack | 2 | 117 | 0 | 117 | PASS |
-| **Total** | | **836** | **8** | **836** | **PASS** |
+| stack | 2 | 119 | 0 | 119 | PASS |
+| **Total** | | **838** | **8** | **838** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -1025,6 +1025,7 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "v6 echo reply checksum verification" | PASS |
 | (original) | "DeviceCapabilities defaults include icmpv6 checksum" | PASS |
 | (original) | "stack v6 UDP socket receives datagram" | PASS |
+| (original) | "stack v6 UDP socket rejects zero checksum" | PASS |
 | (original) | "stack v6 TCP socket receives SYN, replies SYN-ACK" | PASS |
 | (original) | "stack v6 ICMPv6 socket receives echo reply" | PASS |
 | (original) | "stack v6 raw socket receives IP payload" | PASS |
@@ -1047,6 +1048,7 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "Medium::Ip IPv4 TCP RST" | PASS |
 | (original) | "Medium::Ip IPv6 TCP RST" | PASS |
 | (original) | "Medium::Ip UDP socket roundtrip" | PASS |
+| (original) | "Medium::Ip UDP socket rejects bad checksum" | PASS |
 | (original) | "Medium::Ip TCP socket SYN-ACK" | PASS |
 | (original) | "Medium::Ip IPv4 fragmented egress" | PASS |
 | (original) | "Medium::Ip IPv4 fragmented ingress" | PASS |

@@ -137,10 +137,12 @@ Zig version: 0.16.0
 
 ## Testing
 
-818 tests passing across all modules. Tests are transliterated from smoltcp's
-test suite where applicable (see SPEC.md for the conformance testing
-methodology and tests/CONFORMANCE.md for per-test tracking). The smoltcp
-source is included as a git submodule under `ref/smoltcp/` for reference.
+The host suite covers deterministic conformance tests, bounded fuzz target
+smoke tests, integration demos, and regression tests. Deterministic protocol
+tests are transliterated from smoltcp's test suite where applicable (see
+SPEC.md for the conformance testing methodology and tests/CONFORMANCE.md for
+per-test tracking). The smoltcp source is included as a git submodule under
+`ref/smoltcp/` for reference.
 
 **Tests are diagnostic tools, not success criteria.** A passing suite does not
 mean the code is good. A failing test does not mean the code is wrong. Tests
@@ -149,16 +151,22 @@ behavior -- but they are not a definition of correctness. The real metric is
 whether the code furthers the project's vision.
 
 ```bash
-# Run all unit tests
-zig build test
+# Run the full local validation suite with the pinned Zig toolchain
+mise run check
 
-# Run with verbose output
-zig build test -- --summary all
+# Run all unit tests
+mise run test
+
+# Run all demos
+mise run demo
+
+# Run a bounded native fuzz pass
+mise run fuzz
 ```
 
 ## Integration Demos
 
-Fourteen end-to-end demos exercise the full stack API (sockets -> Stack poll
+Fifteen end-to-end demos exercise the full stack API (sockets -> Stack poll
 loop -> Device) with no manual packet construction. They serve as both
 functional validation and usage documentation.
 
@@ -180,6 +188,7 @@ zig build demo -- --summary all
 | IP medium | `examples/ip_medium.zig` | UDP echo over Medium::Ip -- no Ethernet, no ARP, raw IP point-to-point |
 | Fragmentation | `examples/fragmentation.zig` | 600B UDP over 576B MTU: IPv4 fragmentation on egress, reassembly on ingress |
 | Multi-socket | `examples/multi_socket.zig` | TCP + UDP + ICMP active simultaneously, proving protocol demux under load |
+| TCP forwarder gateway | `examples/tcp_forwarder_gateway.zig` | Gateway accepts a non-local IPv4 TCP SYN into a caller-owned socket and exchanges data |
 | Raw socket | `examples/raw_socket.zig` | Raw IP socket on protocol 253: bidirectional payload exchange |
 | Dual-stack | `examples/dual_stack.zig` | IPv4 TCP + IPv6 UDP running concurrently on same stacks |
 | DNS resolve | `examples/dns_resolve.zig` | DNS A-record resolution via DNS socket + mock UDP:53 server |
@@ -194,7 +203,7 @@ Add zmoltcp as a Zig dependency in your `build.zig.zon`:
 ```zig
 .dependencies = .{
     .zmoltcp = .{
-        .url = "https://github.com/hotschmoe/zmoltcp/archive/<commit>.tar.gz",
+        .url = "https://github.com/hotschmoe/zmoltcp/archive/refs/tags/v<version>.tar.gz",
         .hash = "...",
     },
 },

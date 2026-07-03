@@ -46,5 +46,13 @@ jobs:
       - name: Run tests
         run: zig build test
 
+      - name: Run demos
+        run: zig build demo
+
+      - name: Run bounded fuzz smoke
+        env:
+          ZIG_FUZZ_ALLOW_COVERAGE_FALLBACK: "1"
+        run: bash scripts/fuzz-smoke.sh
+
       - name: Cross-compile check (aarch64-freestanding)
         run: zig build -Dtarget=aarch64-freestanding-none

@@ -1,0 +1,35 @@
+[tools]
+zig = "0.16.0"
+
+[tasks.test]
+description = "Run unit, conformance, regression, and fuzz smoke tests"
+run = "zig build test --summary all"
+
+[tasks.demo]
+description = "Run integration demos"
+run = "zig build demo --summary all"
+
+[tasks.fuzz]
+description = "Run bounded native fuzz smoke"
+run = "bash scripts/fuzz-smoke.sh"
+
+[tasks.cross]
+description = "Cross-compile for aarch64 freestanding"
+run = "zig build -Dtarget=aarch64-freestanding-none --summary all"
+
+[tasks.fmt]
+description = "Format Zig sources and package manifest"
+run = "zig fmt build.zig build.zig.zon src examples"
+
+[tasks.check]
+description = "Run the full local validation suite"
+run = [
+    "zig build test --summary all",
+    "zig build demo --summary all",
+    "mise run fuzz",
+    "zig build -Dtarget=aarch64-freestanding-none --summary all",
+]
+
+[tasks.ci]
+description = "Alias for check"
+run = "mise run check"

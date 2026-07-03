@@ -27,6 +27,23 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run zmoltcp unit and conformance tests");
     test_step.dependOn(&run_unit_tests.step);
 
+    // Native fuzzing needs a threaded test binary, and Zig 0.16.0's fuzz
+    // runner fails to compile with error traces enabled.
+    const fuzz_mod = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .single_threaded = false,
+        .error_tracing = false,
+    });
+    const fuzz_tests = b.addTest(.{
+        .name = "fuzz",
+        .root_module = fuzz_mod,
+    });
+    const run_fuzz_tests = b.addRunArtifact(fuzz_tests);
+    const fuzz_step = b.step("fuzz", "Run zmoltcp fuzz targets");
+    fuzz_step.dependOn(&run_fuzz_tests.step);
+
     // Integration demos -- `zig build demo`
     const demo_step = b.step("demo", "Run zmoltcp integration demos");
     for ([_][]const u8{

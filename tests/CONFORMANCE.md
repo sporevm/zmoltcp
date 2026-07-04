@@ -2,8 +2,8 @@
 
 Tracks zmoltcp tests against their smoltcp reference implementations.
 
-**Total: 883 deterministic tests passing** (882 named + 1 root import test),
-plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
+**Total: 877 deterministic tests passing** (876 named + 1 root import test),
+plus 11 fuzz target smoke tests tracked in `tests/FUZZING.md`.
 
 ## Summary
 
@@ -11,47 +11,47 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 |--------|--------------|---------------|-----|---------|--------|
 | wire/checksum | 5 | 6 | 0 | 6 | PASS |
 | wire/ethernet | 5 | 5 | 0 | 5 | PASS |
-| wire/arp | 4 | 5 | 0 | 5 | PASS |
+| wire/arp | 4 | 8 | 0 | 8 | PASS |
 | wire/ip | 0 | 7 | 0 | 7 | PASS |
-| wire/ipv4 | 15 | 16 | 0 | 16 | PASS |
-| wire/tcp | 9 | 22 | 0 | 22 | PASS |
-| wire/udp | 8 | 11 | 0 | 11 | PASS |
-| wire/icmp | 5 | 5 | 0 | 5 | PASS |
+| wire/ipv4 | 15 | 17 | 0 | 17 | PASS |
+| wire/tcp | 9 | 24 | 0 | 24 | PASS |
+| wire/udp | 8 | 16 | 0 | 16 | PASS |
+| wire/icmp | 5 | 6 | 0 | 6 | PASS |
 | wire/ipsec_esp | 6 | 6 | 0 | 6 | PASS |
 | wire/ipsec_ah | 6 | 7 | 0 | 7 | PASS |
 | storage/ring_buffer | 15 | 14 | 1 | 14 | PASS |
 | storage/assembler | 38 | 37 | 1 | 37 | PASS |
 | storage/packet_buffer | 10 | 12 | 0 | 12 | PASS |
 | time | 10 | 8 | 2 | 8 | PASS |
-| socket/tcp | 175 | 222 | 3 | 222 | PASS |
+| socket/tcp | 175 | 224 | 3 | 224 | PASS |
 | socket/udp | 16 | 17 | 0 | 17 | PASS |
 | wire/dhcp | 9 | 9 | 0 | 9 | PASS |
-| socket/dhcp | 11 | 11 | 0 | 11 | PASS |
-| wire/dns | 7 | 7 | 0 | 7 | PASS |
-| socket/dns | 0 | 16 | 0 | 16 | PASS |
-| socket/icmp | 6 | 7 | 0 | 7 | PASS |
+| socket/dhcp | 11 | 16 | 0 | 16 | PASS |
+| wire/dns | 7 | 9 | 0 | 9 | PASS |
+| socket/dns | 0 | 21 | 0 | 21 | PASS |
+| socket/icmp | 6 | 10 | 0 | 10 | PASS |
 | socket/raw | 5 | 11 | 0 | 11 | PASS |
 | wire/igmp | 4 | 8 | 0 | 8 | PASS |
 | wire/ipv6 | 12 | 12 | 0 | 12 | PASS |
 | wire/ipv6option | 7 | 7 | 0 | 7 | PASS |
-| wire/ipv6ext_header | 3 | 5 | 0 | 5 | PASS |
+| wire/ipv6ext_header | 3 | 6 | 0 | 6 | PASS |
 | wire/ipv6fragment | 3 | 4 | 0 | 4 | PASS |
-| wire/ipv6routing | 3 | 4 | 0 | 4 | PASS |
-| wire/ipv6hbh | 2 | 3 | 0 | 3 | PASS |
-| wire/ndiscoption | 5 | 8 | 0 | 8 | PASS |
-| wire/ndisc | 2 | 4 | 0 | 4 | PASS |
-| wire/mld | 2 | 6 | 0 | 6 | PASS |
-| wire/icmpv6 | 6 | 9 | 0 | 9 | PASS |
+| wire/ipv6routing | 3 | 5 | 0 | 5 | PASS |
+| wire/ipv6hbh | 2 | 4 | 0 | 4 | PASS |
+| wire/ndiscoption | 5 | 9 | 0 | 9 | PASS |
+| wire/ndisc | 2 | 5 | 0 | 5 | PASS |
+| wire/mld | 2 | 7 | 0 | 7 | PASS |
+| wire/icmpv6 | 6 | 10 | 0 | 10 | PASS |
 | iface | 24 | 62 | 1 | 62 | PASS |
 | phy | 0 | 16 | 0 | 16 | PASS |
 | fragmentation | 3 | 16 | 0 | 16 | PASS |
 | wire/ieee802154 | 5 | 11 | 0 | 11 | PASS |
 | wire/sixlowpan | 6 | 20 | 0 | 20 | PASS |
-| wire/sixlowpan_frag | 0 | 8 | 0 | 8 | PASS |
+| wire/sixlowpan_frag | 0 | 9 | 0 | 9 | PASS |
 | wire/rpl | 0 | 19 | 0 | 19 | PASS |
 | rpl | 0 | 26 | 0 | 26 | PASS |
-| stack | 2 | 114 | 0 | 114 | PASS |
-| **Total** | | **818** | **8** | **818** | **PASS** |
+| stack | 2 | 124 | 0 | 124 | PASS |
+| **Total** | | **857** | **8** | **857** | **PASS** |
 
 ## Wire Layer Tests
 
@@ -80,6 +80,9 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | wire/arp.rs:test_parse | "parse ARP request" | PASS |
 | (original) | "parse ARP truncated" | PASS |
 | (original) | "parse ARP unsupported hardware" | PASS |
+| (original) | "parse ARP unsupported hardware length" | PASS |
+| (original) | "parse ARP unsupported protocol length" | PASS |
+| (original) | "parse ARP unsupported operation" | PASS |
 | wire/arp.rs:roundtrip | "ARP roundtrip" | PASS |
 | (original) | "emit ARP reply" | PASS |
 
@@ -104,6 +107,7 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | wire/ipv4.rs:roundtrip | "IPv4 roundtrip" | PASS |
 | (original) | "IPv4 emit produces valid checksum" | PASS |
 | (original) | "IPv4 payload extraction" | PASS |
+| (original) | "IPv4 payload rejects over-declared total length" | PASS |
 | wire/ipv4.rs:test_deconstruct | "IPv4 deconstruct raw fields" | PASS |
 | wire/ipv4.rs:test_construct | "IPv4 construct with flags and frag offset" | PASS |
 | wire/ipv4.rs:test_overlong | "IPv4 overlong buffer clamped to total_len" | PASS |
@@ -123,6 +127,7 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | wire/tcp.rs:test_parse_options | "parse TCP with MSS option" | PASS |
 | wire/tcp.rs:roundtrip | "TCP SYN roundtrip" | PASS |
 | (original) | "TCP checksum computation" | PASS |
+| (original) | "TCP IPv6 checksum verification" | PASS |
 | (original) | "SeqNumber wrapping add and sub" | PASS |
 | (original) | "SeqNumber signed comparison across wrap boundary" | PASS |
 | (original) | "SeqNumber diff" | PASS |
@@ -139,6 +144,7 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | (original) | "SACK range parse and emit roundtrip" | PASS |
 | (original) | "SYN options MSS + WindowScale + SackPermitted roundtrip" | PASS |
 | wire/tcp.rs:test_malformed_tcp_options | "malformed TCP options parsed without error" | PASS |
+| (original) | "TCP window scale option is bounded" | PASS |
 
 ### wire/udp.zig
 | smoltcp Reference | zmoltcp Test | Status |
@@ -147,13 +153,18 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | (original) | "parse UDP truncated" | PASS |
 | wire/udp.rs:roundtrip | "UDP roundtrip" | PASS |
 | (original) | "UDP payload extraction" | PASS |
+| (original) | "UDP payload clamps trailing padding" | PASS |
+| (original) | "UDP payload rejects over-declared length" | PASS |
 | wire/udp.rs:test_deconstruct | "UDP deconstruct raw fields" | PASS |
 | wire/udp.rs:test_construct | "UDP construct with checksum" | PASS |
 | wire/udp.rs:test_zero_checksum | "UDP zero checksum becomes 0xFFFF" | PASS |
 | wire/udp.rs:test_no_checksum | "UDP disabled checksum passes verify" | PASS |
+| (original) | "UDP checksum verifies declared length with trailing padding" | PASS |
+| (original) | "UDP checksum rejects over-declared length" | PASS |
 | (original) | "UDP v6 checksum roundtrip" | PASS |
 | (original) | "UDP v6 zero checksum is forbidden" | PASS |
 | (original) | "UDP v6 fillChecksum avoids zero" | PASS |
+| (original) | "UDP v6 checksum rejects over-declared length" | PASS |
 
 ### wire/icmp.zig
 | smoltcp Reference | zmoltcp Test | Status |
@@ -161,6 +172,7 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | wire/icmpv4.rs:test_parse_echo | "parse ICMP echo request" | PASS |
 | (original) | "parse ICMP dest unreachable" | PASS |
 | (original) | "ICMP echo emit with valid checksum" | PASS |
+| (original) | "ICMP parse rejects bad checksum" | PASS |
 | (original) | "ICMP echo roundtrip" | PASS |
 | wire/icmpv4.rs:test_check_len | "ICMP check length" | PASS |
 
@@ -202,8 +214,10 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | smoltcp Reference | zmoltcp Test | Status |
 |---|---|---|
 | wire/dns.rs:test_parse_name | "parse name with pointer compression" | PASS |
+| (original) | "parse name rejects out-of-range start" | PASS |
 | wire/dns.rs:test_parse_request | "parse request" | PASS |
 | wire/dns.rs:test_parse_response | "parse response single A" | PASS |
+| (original) | "parse response single AAAA" | PASS |
 | wire/dns.rs:test_parse_response_multiple_a | "parse response multiple A" | PASS |
 | wire/dns.rs:test_parse_response_cname | "parse response CNAME" | PASS |
 | wire/dns.rs:test_parse_response_nxdomain | "parse response NXDomain" | PASS |
@@ -256,6 +270,7 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | wire/ipv6ext_header.rs:test_ext_header_deconstruct | "parse extension header with PadN(12)" | PASS |
 | wire/ipv6ext_header.rs:test_ext_header_construct | "extension header roundtrip" | PASS |
 | (original) | "parse truncated" | PASS |
+| (original) | "emit rejects data beyond encoded header length" | PASS |
 
 ### wire/ipv6fragment.zig
 | smoltcp Reference | zmoltcp Test | Status |
@@ -272,6 +287,7 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | wire/ipv6routing.rs:test_construct_type2 | "Type2 roundtrip" | PASS |
 | wire/ipv6routing.rs:test_deconstruct_rpl_elided | "parse RPL elided" | PASS |
 | (original) | "unrecognized routing type" | PASS |
+| (original) | "RPL emit rejects non-nibble fields" | PASS |
 
 ### wire/ipv6hbh.zig
 | smoltcp Reference | zmoltcp Test | Status |
@@ -279,6 +295,7 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | wire/ipv6hopbyhop.rs:test_hbh_deconstruct | "parse HBH with PadN(4)" | PASS |
 | (original) | "parse HBH with multiple options" | PASS |
 | (original) | "mldv2RouterAlert preset" | PASS |
+| (original) | "parse HBH rejects malformed option tails" | PASS |
 
 ### wire/ndiscoption.zig
 | smoltcp Reference | zmoltcp Test | Status |
@@ -291,6 +308,7 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | (original) | "parse length zero is error" | PASS |
 | (original) | "optionLen basic" | PASS |
 | wire/ndiscoption.rs:test_construct_prefix_info | "prefix information roundtrip" | PASS |
+| (original) | "unknown option emit rejects inconsistent length" | PASS |
 
 ### wire/ndisc.zig
 | smoltcp Reference | zmoltcp Test | Status |
@@ -299,6 +317,7 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | (original) | "parse neighbor solicit" | PASS |
 | wire/ndisc.rs:test_router_advert_emit | "router advertisement roundtrip" | PASS |
 | (original) | "parse unrecognized NDP type" | PASS |
+| (original) | "parse rejects malformed option blocks" | PASS |
 
 ### wire/mld.zig
 | smoltcp Reference | zmoltcp Test | Status |
@@ -306,6 +325,7 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | wire/mld.rs:test_query_deconstruct | "parse MLD query" | PASS |
 | wire/mld.rs:test_report_deconstruct | "parse MLD report" | PASS |
 | (original) | "parse MLD unrecognized type" | PASS |
+| (original) | "parse MLD rejects truncated variable fields" | PASS |
 | wire/mld.rs:test_query_construct | "MLD query roundtrip" | PASS |
 | wire/mld.rs:test_record_deconstruct | "parse address record" | PASS |
 | (original) | "address record roundtrip" | PASS |
@@ -317,6 +337,7 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | wire/icmpv6.rs:test_echo_emit | "echo reply roundtrip" | PASS |
 | (original) | "bad checksum rejected" | PASS |
 | wire/icmpv6.rs:test_pkt_too_big | "pkt_too_big roundtrip" | PASS |
+| (original) | "pkt_too_big parses partial invoking packet" | PASS |
 | wire/icmpv6.rs:test_dst_unreachable | "dst_unreachable roundtrip" | PASS |
 | (original) | "ndisc via icmpv6" | PASS |
 | (original) | "mld query via icmpv6" | PASS |
@@ -329,7 +350,7 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | wire/ieee802154.rs:extended_addr | "parse extended addresses" | PASS |
 | wire/ieee802154.rs:short_addr | "parse short addresses" | PASS |
 | wire/ieee802154.rs:zolertia_remote | "parse zolertia remote" | PASS |
-| wire/ieee802154.rs:security | "parse frame with security" | PASS |
+| (security hardening) | "reject frame with security" | PASS |
 | (original) | "short addr roundtrip" | PASS |
 | (original) | "extended addr roundtrip with compression" | PASS |
 | (original) | "broadcast detection" | PASS |
@@ -371,6 +392,7 @@ plus the fuzz target smoke tests tracked in `tests/FUZZING.md`.
 | (original) | "payloadSlice subsequent fragment" | PASS |
 | (original) | "truncated errors" | PASS |
 | (original) | "malformed dispatch" | PASS |
+| (original) | "undersized datagram sizes are malformed" | PASS |
 | (original) | "bufferLen consistency" | PASS |
 | (original) | "emit buffer too small" | PASS |
 
@@ -571,6 +593,8 @@ were never actually run despite being listed here. The test module runs with
 | test_syn_sent_syn_ack_not_incremented | "SYN-SENT rejects SYN\|ACK with un-incremented ACK" | PASS |
 | test_connect_twice | "connect twice fails" | PASS |
 | test_connect_validation | "connect validation" | PASS |
+| (original) | "connect advances initial sequence numbers" | PASS |
+| (original) | "listen initial sequence numbers are tuple keyed" | PASS |
 | test_established_recv | "ESTABLISHED recv data" | PASS |
 | test_established_send | "ESTABLISHED send data" | PASS |
 | test_established_send_recv | "ESTABLISHED send and receive" | PASS |
@@ -783,6 +807,9 @@ were never actually run despite being listed here. The test module runs with
 | socket/icmp.rs:test_recv_process | "process inbound and recv" | PASS |
 | socket/icmp.rs:test_accept_bad_id | "rejects packet with wrong identifier" | PASS |
 | socket/icmp.rs:test_accepts_udp | "accepts ICMP error for bound UDP port" | PASS |
+| (original) | "rejects ICMP UDP error with non-UDP embedded protocol" | PASS |
+| (original) | "rejects ICMP UDP error with wrong embedded local address" | PASS |
+| (original) | "rejects ICMPv6 UDP error with non-UDP embedded header" | PASS |
 | (original) | "pollAt returns ZERO when tx queued, null when empty" | PASS |
 
 ### socket/raw.zig
@@ -806,14 +833,19 @@ were never actually run despite being listed here. The test module runs with
 | socket/dhcpv4.rs:test_bind | "bind" | PASS |
 | socket/dhcpv4.rs:test_bind_different_ports | "bind different ports" | PASS |
 | socket/dhcpv4.rs:test_discover_retransmit | "discover retransmit" | PASS |
+| (original) | "discover dispatch rotates transaction IDs" | PASS |
 | socket/dhcpv4.rs:test_request_retransmit | "request retransmit" | PASS |
 | socket/dhcpv4.rs:test_request_timeout | "request timeout" | PASS |
 | socket/dhcpv4.rs:test_request_nak | "request nak" | PASS |
+| (original) | "request rejects ACK from mismatched server" | PASS |
+| (original) | "request rejects NAK from mismatched server" | PASS |
 | socket/dhcpv4.rs:test_renew | "renew" | PASS |
+| (original) | "renew rejects ACK from mismatched server" | PASS |
 | socket/dhcpv4.rs:test_renew_rebind_retransmit | "renew rebind retransmit" | PASS |
 | socket/dhcpv4.rs:test_renew_rebind_timeout | "renew rebind timeout" | PASS |
 | socket/dhcpv4.rs:test_min_max_renew_timeout | "min max renew timeout" | PASS |
 | socket/dhcpv4.rs:test_renew_nak | "renew nak" | PASS |
+| (original) | "renew rejects NAK from mismatched server" | PASS |
 
 ### socket/dns.zig
 | smoltcp Reference | zmoltcp Test | Status |
@@ -823,11 +855,16 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "start query rejects too-long label" | PASS |
 | (original) | "start query no free slot" | PASS |
 | (original) | "dispatch emits query packet" | PASS |
+| (original) | "start query rotates transaction IDs and source ports" | PASS |
 | (original) | "dispatch retransmit with backoff" | PASS |
 | (original) | "dispatch timeout tries next server" | PASS |
 | (original) | "dispatch all servers exhausted" | PASS |
 | (original) | "process A response" | PASS |
+| (original) | "process AAAA response for IPv6 socket" | PASS |
+| (original) | "IPv6 DNS socket ignores A answers" | PASS |
+| (original) | "process ignores response from unexpected server" | PASS |
 | (original) | "process NXDomain" | PASS |
+| (original) | "process NXDomain validates question before failure" | PASS |
 | (original) | "process CNAME then A" | PASS |
 | (original) | "cancel query frees slot" | PASS |
 
@@ -964,6 +1001,7 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "burst size limits frames per poll cycle" | PASS |
 | (original) | "DeviceCapabilities defaults enable all checksums" | PASS |
 | (original) | "ChecksumMode shouldVerifyRx and shouldComputeTx" | PASS |
+| (original) | "stack TCP ingress rejects bad checksum" | PASS |
 | (original) | "stack v6 echo request produces reply" | PASS |
 | (original) | "stack v6 drops multicast source" | PASS |
 | (original) | "stack v6 drops unknown destination" | PASS |
@@ -984,6 +1022,7 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "MLD leave report on group leave" | PASS |
 | (original) | "MLD general query triggers reports for all groups" | PASS |
 | (original) | "MLD specific query triggers report for one group" | PASS |
+| (original) | "MLD query with bad ICMPv6 checksum is ignored" | PASS |
 | (original) | "MLD report has HBH Router Alert header" | PASS |
 | (original) | "MLD report ICMPv6 checksum correct" | PASS |
 | (original) | "enableSlaac configures link-local address from MAC" | PASS |
@@ -994,7 +1033,9 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "SLAAC-derived address uses EUI-64" | PASS |
 | (original) | "RA without addrconf flag does not add address" | PASS |
 | (original) | "prefix expiry removes SLAAC state" | PASS |
+| (original) | "RA processing: zero valid lifetime withdraws SLAAC address" | PASS |
 | (original) | "router lifetime expiry removes default route" | PASS |
+| (original) | "RA processing: zero router lifetime withdraws default route" | PASS |
 | (original) | "full SLAAC flow: enable -> RS -> RA -> address configured" | PASS |
 | (original) | "SLAAC pollAt returns next_rs_at when soliciting" | PASS |
 | (original) | "SLAAC disabled by default" | PASS |
@@ -1003,7 +1044,9 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "v6 echo reply checksum verification" | PASS |
 | (original) | "DeviceCapabilities defaults include icmpv6 checksum" | PASS |
 | (original) | "stack v6 UDP socket receives datagram" | PASS |
+| (original) | "stack v6 UDP socket rejects zero checksum" | PASS |
 | (original) | "stack v6 TCP socket receives SYN, replies SYN-ACK" | PASS |
+| (original) | "stack v6 TCP ingress rejects bad checksum" | PASS |
 | (original) | "stack v6 ICMPv6 socket receives echo reply" | PASS |
 | (original) | "stack v6 raw socket receives IP payload" | PASS |
 | (original) | "stack v6 raw socket suppresses ICMPv6 param problem" | PASS |
@@ -1017,6 +1060,7 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "stack v6 two-fragment reassembly delivers to socket" | PASS |
 | (original) | "stack v6 extension header chain walking" | PASS |
 | (original) | "Medium::Ip IPv4 ingress echo reply" | PASS |
+| (original) | "Medium::Ip IPv4 ingress rejects bad header checksum" | PASS |
 | (original) | "Medium::Ip IPv6 ingress echo reply" | PASS |
 | (original) | "Medium::Ip IPv4 no ARP emitted" | PASS |
 | (original) | "Medium::Ip IPv6 no NDP emitted" | PASS |
@@ -1024,11 +1068,14 @@ were never actually run despite being listed here. The test module runs with
 | (original) | "Medium::Ip IPv4 TCP RST" | PASS |
 | (original) | "Medium::Ip IPv6 TCP RST" | PASS |
 | (original) | "Medium::Ip UDP socket roundtrip" | PASS |
+| (original) | "Medium::Ip UDP socket rejects bad checksum" | PASS |
 | (original) | "Medium::Ip TCP socket SYN-ACK" | PASS |
 | (original) | "Medium::Ip IPv4 fragmented egress" | PASS |
 | (original) | "Medium::Ip IPv4 fragmented ingress" | PASS |
 | (original) | "802.15.4 stack compiles and initializes" | PASS |
 | (original) | "802.15.4 IPHC ingress: ICMPv6 echo request produces reply" | PASS |
+| (original) | "802.15.4 drops oversized 6LoWPAN first fragment" | PASS |
+| (original) | "802.15.4 drops 6LoWPAN fragment past datagram size" | PASS |
 | (original) | "802.15.4 PAN ID filtering drops wrong PAN" | PASS |
 | (original) | "802.15.4 non-data frame is dropped" | PASS |
 

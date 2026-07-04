@@ -328,96 +328,152 @@ test "fuzz P0 stack ingress" {
     try testing.fuzz({}, fuzzStackIngress, .{});
 }
 
-fn fuzzReassemblerV4(s: *std.testing.Smith) !void {
-    const Reasm = fragmentation.Reassembler(fragmentation.FragKey, .{ .buffer_size = 128, .max_segments = 4 });
-    var r = Reasm{};
-    var payload: [32]u8 = undefined;
+// -- Coverage-model helpers (shared by the assembler and reassembler oracles) --
+//
+// The assembler and reassembler track which byte ranges have been received.
+// A boolean-per-byte shadow lets the fuzzer assert not just "did not crash"
+// but the exact reported coverage and, for the reassembler, the exact bytes.
 
-    var budget: usize = 48;
-    while (budget > 0) : (budget -= 1) {
-        const key = fragmentation.FragKey{
-            .id = s.value(u16),
-            .src_addr = fuzzV4(s),
-            .dst_addr = fuzzV4(s),
-            .protocol = @enumFromInt(s.value(u8)),
-        };
-        switch (s.value(u8) % 5) {
-            0 => r.accept(key, fuzzInstant(s)),
-            1 => {
-                const len = s.slice(&payload);
-                const off = s.value(usize) % 180;
-                _ = r.add(payload[0..len], off);
-            },
-            2 => r.setTotalSize(s.value(usize) % 180),
-            3 => r.removeExpired(fuzzInstant(s)),
-            else => if (r.assemble()) |packet| {
-                try testing.expect(packet.len <= 128);
-            },
-        }
-    }
+fn leadingTrue(seen: []const bool) usize {
+    var k: usize = 0;
+    while (k < seen.len and seen[k]) : (k += 1) {}
+    return k;
 }
 
-fn fuzzReassemblerV6(s: *std.testing.Smith) !void {
-    const Reasm = fragmentation.Reassembler(fragmentation.FragKeyV6, .{ .buffer_size = 128, .max_segments = 4 });
-    var r = Reasm{};
-    var payload: [32]u8 = undefined;
-
-    var budget: usize = 48;
-    while (budget > 0) : (budget -= 1) {
-        const key = fragmentation.FragKeyV6{
-            .id = s.value(u32),
-            .src_addr = fuzzV6(s),
-            .dst_addr = fuzzV6(s),
-        };
-        switch (s.value(u8) % 5) {
-            0 => r.accept(key, fuzzInstant(s)),
-            1 => {
-                const len = s.slice(&payload);
-                const off = s.value(usize) % 180;
-                _ = r.add(payload[0..len], off);
-            },
-            2 => r.setTotalSize(s.value(usize) % 180),
-            3 => r.removeExpired(fuzzInstant(s)),
-            else => if (r.assemble()) |packet| {
-                try testing.expect(packet.len <= 128);
-            },
-        }
+fn allFalse(seen: []const bool) bool {
+    for (seen) |b| {
+        if (b) return false;
     }
+    return true;
 }
 
-fn fuzzReassembler6lowpan(s: *std.testing.Smith) !void {
-    const Reasm = fragmentation.Reassembler(fragmentation.FragKey6LoWPAN, .{ .buffer_size = 128, .max_segments = 4 });
+/// Shift the coverage window left by `k` bytes, zero-filling the tail. Mirrors
+/// the coordinate shift the assembler applies when it removes its front run.
+fn shiftLeftBool(seen: []bool, k: usize) void {
+    if (k == 0) return;
+    var i: usize = 0;
+    while (i + k < seen.len) : (i += 1) seen[i] = seen[i + k];
+    while (i < seen.len) : (i += 1) seen[i] = false;
+}
+
+fn fuzzFragKeyV4(s: *std.testing.Smith) fragmentation.FragKey {
+    return .{
+        .id = s.value(u16),
+        .src_addr = fuzzV4(s),
+        .dst_addr = fuzzV4(s),
+        .protocol = @enumFromInt(s.value(u8)),
+    };
+}
+
+fn fuzzFragKeyV6(s: *std.testing.Smith) fragmentation.FragKeyV6 {
+    return .{
+        .id = s.value(u32),
+        .src_addr = fuzzV6(s),
+        .dst_addr = fuzzV6(s),
+    };
+}
+
+fn fuzzFragKey6lowpan(s: *std.testing.Smith) fragmentation.FragKey6LoWPAN {
+    return fragmentation.FragKey6LoWPAN.fromAddrs(
+        fuzzIeeeAddr(s),
+        fuzzIeeeAddr(s),
+        s.value(u16),
+        s.value(u16),
+    );
+}
+
+/// Drive a Reassembler against a byte-accurate shadow model. Every successful
+/// add is recorded into a coverage bitmap and a shadow buffer; every assemble
+/// is checked for exact length AND exact byte content, so a reassembler that
+/// returned wrong or uninitialized bytes would fail here rather than slip past
+/// a length-only bound.
+fn fuzzReassemblerModeled(
+    comptime Key: type,
+    s: *std.testing.Smith,
+    keyGen: *const fn (*std.testing.Smith) Key,
+) !void {
+    const BUF = 128;
+    const Reasm = fragmentation.Reassembler(Key, .{ .buffer_size = BUF, .max_segments = 4 });
     var r = Reasm{};
+
+    var active = false;
+    var cur_key: Key = undefined;
+    var expires: time.Instant = time.Instant.ZERO;
+    var total: ?usize = null;
+    var seen = [_]bool{false} ** BUF;
+    var shadow = [_]u8{0} ** BUF;
     var payload: [32]u8 = undefined;
 
-    var budget: usize = 48;
+    var budget: usize = 64;
     while (budget > 0) : (budget -= 1) {
-        const key = fragmentation.FragKey6LoWPAN.fromAddrs(
-            fuzzIeeeAddr(s),
-            fuzzIeeeAddr(s),
-            s.value(u16),
-            s.value(u16),
-        );
         switch (s.value(u8) % 5) {
-            0 => r.accept(key, fuzzInstant(s)),
+            0 => {
+                const key = keyGen(s);
+                const e = fuzzInstant(s);
+                // accept() only resets when the key differs from the current one.
+                if (!(active and cur_key.eql(key))) {
+                    active = true;
+                    cur_key = key;
+                    expires = e;
+                    total = null;
+                    seen = [_]bool{false} ** BUF;
+                }
+                r.accept(key, e);
+            },
             1 => {
                 const len = s.slice(&payload);
-                const off = s.value(usize) % 180;
-                _ = r.add(payload[0..len], off);
+                // Deliberately reach past BUF sometimes to exercise the reject path.
+                const off = s.value(usize) % (BUF + 16);
+                if (r.add(payload[0..len], off)) {
+                    // Success implies active and off + len <= BUF.
+                    for (0..len) |i| {
+                        seen[off + i] = true;
+                        shadow[off + i] = payload[i];
+                    }
+                }
             },
-            2 => r.setTotalSize(s.value(usize) % 180),
-            3 => r.removeExpired(fuzzInstant(s)),
-            else => if (r.assemble()) |packet| {
-                try testing.expect(packet.len <= 128);
+            2 => {
+                const size = s.value(usize) % (BUF + 1);
+                total = size;
+                r.setTotalSize(size);
+            },
+            3 => {
+                const now = fuzzInstant(s);
+                if (active and expires.lessThan(now)) {
+                    active = false;
+                    total = null;
+                    seen = [_]bool{false} ** BUF;
+                }
+                r.removeExpired(now);
+            },
+            else => {
+                const expect_len: ?usize = if (total) |t|
+                    (if (leadingTrue(&seen) == t) t else null)
+                else
+                    null;
+                if (r.assemble()) |packet| {
+                    const t = expect_len orelse return error.TestUnexpectedAssembly;
+                    try testing.expectEqual(t, packet.len);
+                    for (0..t) |i| {
+                        try testing.expect(seen[i]);
+                        try testing.expectEqual(shadow[i], packet[i]);
+                    }
+                    // assemble() resets the reassembler on success.
+                    active = false;
+                    total = null;
+                    seen = [_]bool{false} ** BUF;
+                } else {
+                    try testing.expect(expect_len == null);
+                }
             },
         }
     }
 }
 
 fn fuzzReassembly(_: void, s: *std.testing.Smith) !void {
-    try fuzzReassemblerV4(s);
-    try fuzzReassemblerV6(s);
-    try fuzzReassembler6lowpan(s);
+    try fuzzReassemblerModeled(fragmentation.FragKey, s, fuzzFragKeyV4);
+    try fuzzReassemblerModeled(fragmentation.FragKeyV6, s, fuzzFragKeyV6);
+    try fuzzReassemblerModeled(fragmentation.FragKey6LoWPAN, s, fuzzFragKey6lowpan);
 }
 
 test "fuzz P0 fragment reassembly" {
@@ -598,25 +654,67 @@ fn fuzzAssembler(s: *std.testing.Smith) !void {
     const Assembler = assembler_mod.Assembler(4);
     var asmb = Assembler.init();
 
+    // Shadow coverage in the assembler's current coordinate space (index 0 is
+    // the front). removeFront shifts the whole window left, mirrored below.
+    const N = 160;
+    var seen = [_]bool{false} ** N;
+
     var budget: usize = 96;
     while (budget > 0) : (budget -= 1) {
         switch (s.value(u8) % 5) {
-            0 => asmb.add(s.value(usize) % 128, s.value(usize) % 32) catch {},
-            1 => _ = asmb.addThenRemoveFront(s.value(usize) % 128, s.value(usize) % 32) catch 0,
-            2 => _ = asmb.removeFront(),
-            3 => asmb.clear(),
+            0 => {
+                const off = s.value(usize) % N;
+                const size = s.value(usize) % (N - off + 1);
+                var tmp = seen;
+                for (0..size) |i| tmp[off + i] = true;
+                // add is atomic: on TooManyHoles the state is unchanged, so we
+                // only adopt the new coverage when it succeeds.
+                if (asmb.add(off, size)) |_| {
+                    seen = tmp;
+                } else |_| {}
+            },
+            1 => {
+                const off = s.value(usize) % N;
+                const size = s.value(usize) % (N - off + 1);
+                var tmp = seen;
+                for (0..size) |i| tmp[off + i] = true;
+                const k = leadingTrue(&tmp);
+                if (asmb.addThenRemoveFront(off, size)) |removed| {
+                    try testing.expectEqual(k, removed);
+                    shiftLeftBool(&tmp, k);
+                    seen = tmp;
+                } else |_| {}
+            },
+            2 => {
+                const k = leadingTrue(&seen);
+                try testing.expectEqual(k, asmb.removeFront());
+                shiftLeftBool(&seen, k);
+            },
+            3 => {
+                asmb.clear();
+                seen = [_]bool{false} ** N;
+            },
             else => {},
         }
 
+        // Front run, emptiness, and the exact set of data ranges must match the
+        // model. iterData coalesces adjacent data, so maximal runs of the shadow
+        // map correspond one-to-one with the reported ranges.
+        try testing.expectEqual(leadingTrue(&seen), asmb.peekFront());
+        try testing.expectEqual(allFalse(&seen), asmb.isEmpty());
+
         var iter = asmb.iterData(0);
-        var last_right: usize = 0;
-        var iter_budget: usize = 8;
-        while (iter_budget > 0) : (iter_budget -= 1) {
-            const range = iter.next() orelse break;
-            try testing.expect(range[0] <= range[1]);
-            try testing.expect(range[0] >= last_right);
-            last_right = range[1];
+        var pos: usize = 0;
+        while (pos < N) {
+            while (pos < N and !seen[pos]) pos += 1;
+            if (pos == N) break;
+            const left = pos;
+            while (pos < N and seen[pos]) pos += 1;
+            const range = iter.next() orelse return error.TestMissingRange;
+            try testing.expectEqual(left, range[0]);
+            try testing.expectEqual(pos, range[1]);
         }
+        try testing.expect(iter.next() == null);
     }
 }
 

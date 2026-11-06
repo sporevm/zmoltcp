@@ -63,13 +63,13 @@ fn fuzzInstant(s: *std.testing.Smith) time.Instant {
 }
 
 fn fuzzV4(s: *std.testing.Smith) ipv4.Address {
-    var addr: ipv4.Address = .{0} ** ipv4.ADDRESS_LEN;
+    var addr: ipv4.Address = @splat(0);
     _ = s.slice(&addr);
     return addr;
 }
 
 fn fuzzV6(s: *std.testing.Smith) ipv6.Address {
-    var addr: ipv6.Address = .{0} ** ipv6.ADDRESS_LEN;
+    var addr: ipv6.Address = @splat(0);
     _ = s.slice(&addr);
     return addr;
 }
@@ -78,12 +78,12 @@ fn fuzzIeeeAddr(s: *std.testing.Smith) ieee802154.Address {
     switch (s.value(u8) % 3) {
         0 => return .absent,
         1 => {
-            var short: [2]u8 = .{0} ** 2;
+            var short: [2]u8 = @splat(0);
             _ = s.slice(&short);
             return .{ .short = short };
         },
         else => {
-            var extended: [8]u8 = .{0} ** 8;
+            var extended: [8]u8 = @splat(0);
             _ = s.slice(&extended);
             return .{ .extended = extended };
         },
@@ -341,7 +341,7 @@ fn fuzzFragKeyV4(s: *std.testing.Smith) fragmentation.FragKey {
         .id = s.value(u16),
         .src_addr = fuzzV4(s),
         .dst_addr = fuzzV4(s),
-        .protocol = @enumFromInt(s.value(u8)),
+        .protocol = @fromBackingInt(@intCast(s.value(u8))),
     };
 }
 
@@ -380,8 +380,8 @@ fn fuzzReassemblerModeled(
     var cur_key: Key = undefined;
     var expires: time.Instant = time.Instant.ZERO;
     var total: ?usize = null;
-    var seen = [_]bool{false} ** BUF;
-    var shadow = [_]u8{0} ** BUF;
+    var seen = @as([BUF]bool, @splat(false));
+    var shadow = @as([BUF]u8, @splat(0));
     var payload: [32]u8 = undefined;
 
     var budget: usize = 64;
@@ -396,7 +396,7 @@ fn fuzzReassemblerModeled(
                     cur_key = key;
                     expires = e;
                     total = null;
-                    seen = [_]bool{false} ** BUF;
+                    seen = @as([BUF]bool, @splat(false));
                 }
                 r.accept(key, e);
             },
@@ -422,7 +422,7 @@ fn fuzzReassemblerModeled(
                 if (active and expires.lessThan(now)) {
                     active = false;
                     total = null;
-                    seen = [_]bool{false} ** BUF;
+                    seen = @as([BUF]bool, @splat(false));
                 }
                 r.removeExpired(now);
             },
@@ -441,7 +441,7 @@ fn fuzzReassemblerModeled(
                     // assemble() resets the reassembler on success.
                     active = false;
                     total = null;
-                    seen = [_]bool{false} ** BUF;
+                    seen = @as([BUF]bool, @splat(false));
                 } else {
                     try testing.expect(expect_len == null);
                 }
@@ -544,7 +544,7 @@ pub fn fuzzProtocolParsers(_: void, s: *std.testing.Smith) !void {
 
 fn fuzzRingBuffer(s: *std.testing.Smith) !void {
     const Ring = ring_buffer_mod.RingBuffer(u8);
-    var backing: [16]u8 = .{0} ** 16;
+    var backing: [16]u8 = @splat(0);
     var ring = Ring.init(&backing);
     var model: [16]u8 = undefined;
     var model_len: usize = 0;
@@ -595,8 +595,8 @@ fn fuzzRingBuffer(s: *std.testing.Smith) !void {
 fn fuzzPacketBuffer(s: *std.testing.Smith) !void {
     const PacketBuffer = packet_buffer_mod.PacketBuffer(u8);
     const Meta = packet_buffer_mod.PacketMeta(u8);
-    var meta: [4]Meta = .{Meta{}} ** 4;
-    var payload: [16]u8 = .{0} ** 16;
+    var meta: [4]Meta = @splat(Meta{});
+    var payload: [16]u8 = @splat(0);
     var packets = PacketBuffer.init(&meta, &payload);
 
     var budget: usize = 64;
@@ -629,7 +629,7 @@ fn fuzzAssembler(s: *std.testing.Smith) !void {
     // Shadow coverage in the assembler's current coordinate space (index 0 is
     // the front). removeFront shifts the whole window left, mirrored below.
     const N = 160;
-    var seen = [_]bool{false} ** N;
+    var seen = @as([N]bool, @splat(false));
 
     var budget: usize = 96;
     while (budget > 0) : (budget -= 1) {
@@ -664,7 +664,7 @@ fn fuzzAssembler(s: *std.testing.Smith) !void {
             },
             3 => {
                 asmb.clear();
-                seen = [_]bool{false} ** N;
+                seen = @as([N]bool, @splat(false));
             },
             else => {},
         }
@@ -698,9 +698,9 @@ pub fn fuzzStorageStreams(_: void, s: *std.testing.Smith) !void {
 
 fn fuzzUdpSocket(s: *std.testing.Smith, payload: []const u8) !void {
     const Sock = udp_socket.Socket(ipv4);
-    var rx_meta: [4]Sock.PacketMeta = .{Sock.PacketMeta{}} ** 4;
+    var rx_meta: [4]Sock.PacketMeta = @splat(Sock.PacketMeta{});
     var rx_payload: [128]u8 = undefined;
-    var tx_meta: [4]Sock.PacketMeta = .{Sock.PacketMeta{}} ** 4;
+    var tx_meta: [4]Sock.PacketMeta = @splat(Sock.PacketMeta{});
     var tx_payload: [128]u8 = undefined;
     var sock = Sock.init(&rx_meta, &rx_payload, &tx_meta, &tx_payload);
 
@@ -725,9 +725,9 @@ fn fuzzUdpSocket(s: *std.testing.Smith, payload: []const u8) !void {
 
 fn fuzzIcmpSocket(s: *std.testing.Smith, payload: []const u8) !void {
     const Sock = icmp_socket.Socket(ipv4);
-    var rx_meta: [4]Sock.PacketMeta = .{Sock.PacketMeta{}} ** 4;
+    var rx_meta: [4]Sock.PacketMeta = @splat(Sock.PacketMeta{});
     var rx_payload: [128]u8 = undefined;
-    var tx_meta: [4]Sock.PacketMeta = .{Sock.PacketMeta{}} ** 4;
+    var tx_meta: [4]Sock.PacketMeta = @splat(Sock.PacketMeta{});
     var tx_payload: [128]u8 = undefined;
     var sock = Sock.init(&rx_meta, &rx_payload, &tx_meta, &tx_payload);
 
@@ -756,7 +756,7 @@ fn fuzzRawSocket(s: *std.testing.Smith, payload: []const u8) !void {
     var tx_store: [4]Sock.Packet = undefined;
     var sock = Sock.init(&rx_store, &tx_store);
 
-    const proto: ipv4.Protocol = @enumFromInt(s.value(u8));
+    const proto: ipv4.Protocol = @fromBackingInt(@intCast(s.value(u8)));
     sock.bind(proto) catch {};
     if (sock.accepts(proto)) {
         sock.process(REMOTE_V4, proto, payload);
@@ -770,7 +770,7 @@ fn fuzzRawSocket(s: *std.testing.Smith, payload: []const u8) !void {
 
 fn fuzzDnsSocket(s: *std.testing.Smith, payload: []const u8) !void {
     const Sock = dns_socket.Socket(ipv4);
-    var slots: [2]Sock.QuerySlot = .{Sock.QuerySlot{}} ** 2;
+    var slots: [2]Sock.QuerySlot = @splat(Sock.QuerySlot{});
     const servers = [_]ipv4.Address{.{ 8, 8, 8, 8 }};
     var sock = Sock.init(&slots, &servers);
 

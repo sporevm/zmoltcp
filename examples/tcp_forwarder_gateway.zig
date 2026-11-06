@@ -65,10 +65,10 @@ fn earliestPollTime(a: ?Instant, b: ?Instant) ?Instant {
 }
 
 test "gateway accepts non-local TCP SYN and exchanges data" {
-    var client_rx: [1024]u8 = .{0} ** 1024;
-    var client_tx: [1024]u8 = .{0} ** 1024;
-    var gateway_rx: [1024]u8 = .{0} ** 1024;
-    var gateway_tx: [1024]u8 = .{0} ** 1024;
+    var client_rx: [1024]u8 = @splat(0);
+    var client_tx: [1024]u8 = @splat(0);
+    var gateway_rx: [1024]u8 = @splat(0);
+    var gateway_tx: [1024]u8 = @splat(0);
 
     var client_sock = TcpSock.init(&client_rx, &client_tx);
     var gateway_sock = TcpSock.init(&gateway_rx, &gateway_tx);

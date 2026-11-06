@@ -105,8 +105,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run zmoltcp unit and conformance tests");
     test_step.dependOn(&run_unit_tests.step);
 
-    // Native fuzzing needs threaded test binaries, and Zig 0.16.0's fuzz
-    // runner fails to compile with error traces enabled. Each fuzz build root
+    // Native fuzzing needs threaded test binaries. Each fuzz build root
     // contains exactly one testing.fuzz call so active fuzzing is deterministic.
     const fuzz_step = b.step("fuzz", "Run all zmoltcp fuzz targets");
     const fuzz_p0_step = b.step("fuzz-p0", "Run P0 fuzz targets");
@@ -118,14 +117,12 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .single_threaded = false,
-            .error_tracing = false,
         });
         const fuzz_mod = b.createModule(.{
             .root_source_file = b.path(fuzz_target.path),
             .target = target,
             .optimize = optimize,
             .single_threaded = false,
-            .error_tracing = false,
             .imports = &.{.{ .name = "fuzz_common", .module = fuzz_common_mod }},
         });
         const fuzz_tests = b.addTest(.{

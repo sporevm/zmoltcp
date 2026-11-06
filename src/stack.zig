@@ -493,7 +493,7 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
                     .hop_by_hop, .routing, .destination => {
                         const remaining = raw_payload[payload_offset..];
                         const ext = ipv6ext_header.parse(remaining) catch return;
-                        next_header = @enumFromInt(ext.next_header);
+                        next_header = @fromBackingInt(ext.next_header);
                         payload_offset += ipv6ext_header.headerLen(ext.length);
                     },
                     .fragment => {
@@ -506,7 +506,7 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
                             frag_repr,
                             frag_data,
                         ) orelse return;
-                        const final_nh: ipv6.Protocol = @enumFromInt(frag_repr.next_header);
+                        const final_nh: ipv6.Protocol = @fromBackingInt(frag_repr.next_header);
                         self.dispatchV6Payload(ip_repr, final_nh, ip_payload, is_multicast, timestamp, device);
                         return;
                     },
@@ -571,7 +571,6 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
         /// Decompress 6LoWPAN IPHC payload into a full IPv6 packet in sixlowpan_decompress_buf.
         /// For fragmented datagrams, total_uncompressed_len provides the full datagram size.
         fn sixlowpanToIpv6(self: *Self, mac_repr: ieee802154.Repr, iphc_payload: []const u8, total_uncompressed_len: ?u16) ?[]u8 {
-
             var ctx_storage: [4]sixlowpan.AddressContext = undefined;
             var ctx_count: usize = 0;
             for (self.sixlowpan_address_contexts) |maybe_ctx| {
@@ -582,7 +581,10 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             }
 
             const parsed = sixlowpan.parseIphc(
-                iphc_payload, mac_repr.src_addr, mac_repr.dst_addr, ctx_storage[0..ctx_count],
+                iphc_payload,
+                mac_repr.src_addr,
+                mac_repr.dst_addr,
+                ctx_storage[0..ctx_count],
             ) catch return null;
 
             const remaining = iphc_payload[parsed.consumed..];
@@ -1487,8 +1489,13 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
                 self.sixlowpan_tag +%= 1;
 
                 if (!self.sixlowpan_fragmenter.stage(
-                    compress_buf[0..pos], datagram_size, tag, header_diff,
-                    src_ll, dst_ll_addr, self.sixlowpan_pan_id,
+                    compress_buf[0..pos],
+                    datagram_size,
+                    tag,
+                    header_diff,
+                    src_ll,
+                    dst_ll_addr,
+                    self.sixlowpan_pan_id,
                 )) return .sent;
 
                 var frag_buf: [ieee802154.MAX_FRAME_LEN]u8 = undefined;
@@ -1506,8 +1513,12 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             var payload_buf: [IPV6_PAYLOAD_MAX]u8 = undefined;
             const payload_len = serializeIpv6Payload(resp, &payload_buf) orelse return;
             _ = self.emitIpv6Via6LoWPAN(
-                resp.ip.src_addr, resp.ip.dst_addr, resp.ip.protocol,
-                resp.ip.hop_limit, payload_buf[0..payload_len], device,
+                resp.ip.src_addr,
+                resp.ip.dst_addr,
+                resp.ip.protocol,
+                resp.ip.hop_limit,
+                payload_buf[0..payload_len],
+                device,
             );
         }
 
@@ -1592,7 +1603,7 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             // HBH extension header: 8 bytes (length=0 means (0+1)*8)
             const hbh_start = pos;
             pos += ipv6ext_header.emit(.{
-                .next_header = @intFromEnum(ipv6.Protocol.icmpv6),
+                .next_header = @backingInt(ipv6.Protocol.icmpv6),
                 .length = 0,
                 .data = &[_]u8{},
             }, frame_buf[pos..]) catch return;
@@ -1616,7 +1627,7 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             const pseudo = checksum_mod.pseudoHeaderChecksumV6(
                 src_addr,
                 dst_addr,
-                @intFromEnum(ipv6.Protocol.icmpv6),
+                @backingInt(ipv6.Protocol.icmpv6),
                 @intCast(icmpv6_slice.len),
             );
             const cksum = checksum_mod.finish(checksum_mod.calculate(icmpv6_slice, pseudo));
@@ -1991,26 +2002,39 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             return switch (resp.payload) {
                 .icmpv6_echo => |echo| icmpv6.emit(
                     icmpv6.Repr{ .echo_reply = .{ .ident = echo.ident, .seq_no = echo.seq_no, .data = echo.data } },
-                    resp.ip.src_addr, resp.ip.dst_addr, payload_buf,
+                    resp.ip.src_addr,
+                    resp.ip.dst_addr,
+                    payload_buf,
                 ) catch null,
                 .icmpv6_dst_unreachable => |du| icmpv6.emit(
                     icmpv6.Repr{ .dst_unreachable = .{ .reason = du.reason, .header = EMPTY_IPV6_HDR, .data = du.data[0..@min(du.data.len, iface_mod.ICMPV6_ERROR_MAX_DATA)] } },
-                    resp.ip.src_addr, resp.ip.dst_addr, payload_buf,
+                    resp.ip.src_addr,
+                    resp.ip.dst_addr,
+                    payload_buf,
                 ) catch null,
                 .icmpv6_pkt_too_big => |ptb| icmpv6.emit(
                     icmpv6.Repr{ .pkt_too_big = .{ .mtu = ptb.mtu, .header = EMPTY_IPV6_HDR, .data = ptb.data[0..@min(ptb.data.len, iface_mod.ICMPV6_ERROR_MAX_DATA)] } },
-                    resp.ip.src_addr, resp.ip.dst_addr, payload_buf,
+                    resp.ip.src_addr,
+                    resp.ip.dst_addr,
+                    payload_buf,
                 ) catch null,
                 .icmpv6_param_problem => |pp| icmpv6.emit(
                     icmpv6.Repr{ .param_problem = .{ .reason = pp.reason, .pointer = pp.pointer, .header = EMPTY_IPV6_HDR, .data = pp.data[0..@min(pp.data.len, iface_mod.ICMPV6_ERROR_MAX_DATA)] } },
-                    resp.ip.src_addr, resp.ip.dst_addr, payload_buf,
+                    resp.ip.src_addr,
+                    resp.ip.dst_addr,
+                    payload_buf,
                 ) catch null,
                 .ndisc => |ndisc_repr| icmpv6.emit(
                     icmpv6.Repr{ .ndisc = ndisc_repr },
-                    resp.ip.src_addr, resp.ip.dst_addr, payload_buf,
+                    resp.ip.src_addr,
+                    resp.ip.dst_addr,
+                    payload_buf,
                 ) catch null,
                 .tcp => |tcp_repr| serializeTcpV6(
-                    tcp_repr, resp.ip.src_addr, resp.ip.dst_addr, payload_buf,
+                    tcp_repr,
+                    resp.ip.src_addr,
+                    resp.ip.dst_addr,
+                    payload_buf,
                     device_caps.checksum.tcp.shouldComputeTx(),
                 ),
             };
@@ -2048,7 +2072,6 @@ pub fn Stack(comptime Device: type, comptime SocketConfig: type) type {
             .src_addr = ipv6.UNSPECIFIED,
             .dst_addr = ipv6.UNSPECIFIED,
         };
-
     };
 }
 
@@ -2065,11 +2088,11 @@ pub fn LoopbackDevice(comptime max_frames: usize) type {
     return struct {
         const Self = @This();
 
-        rx_queue: [max_frames]Frame = [_]Frame{.{}} ** max_frames,
+        rx_queue: [max_frames]Frame = @splat(.{}),
         rx_head: usize = 0,
         rx_count: usize = 0,
 
-        tx_queue: [max_frames]Frame = [_]Frame{.{}} ** max_frames,
+        tx_queue: [max_frames]Frame = @splat(.{}),
         tx_head: usize = 0,
         tx_count: usize = 0,
 
@@ -2289,7 +2312,6 @@ test "stack loopback device round-trip" {
     try testing.expectEqual(@as(?[]const u8, null), device.dequeueTx());
 }
 
-
 test "stack pollAt returns null with no sockets" {
     var stack = testStack();
     try testing.expectEqual(@as(?Instant, null), stack.pollAt());
@@ -2430,8 +2452,8 @@ test "stack drops non-local TCP SYN without forwarder" {
 test "stack TCP forwarder denial drops without socket state" {
     var device = TestDevice.init();
 
-    var rx_buf: [256]u8 = .{0} ** 256;
-    var tx_buf: [256]u8 = .{0} ** 256;
+    var rx_buf: [256]u8 = @splat(0);
+    var tx_buf: [256]u8 = @splat(0);
     var sock = ForwardTcpSock.init(&rx_buf, &tx_buf);
     sock.ack_delay = null;
     var sock_arr = [_]*ForwardTcpSock{&sock};
@@ -2458,14 +2480,14 @@ test "stack TCP forwarder denial drops without socket state" {
 test "stack TCP forwarder handles non-local SYN before wildcard listener" {
     var device = TestDevice.init();
 
-    var listen_rx_buf: [256]u8 = .{0} ** 256;
-    var listen_tx_buf: [256]u8 = .{0} ** 256;
+    var listen_rx_buf: [256]u8 = @splat(0);
+    var listen_tx_buf: [256]u8 = @splat(0);
     var listener = ForwardTcpSock.init(&listen_rx_buf, &listen_tx_buf);
     listener.ack_delay = null;
     try listener.listen(.{ .port = PUBLIC_PORT });
 
-    var forward_rx_buf: [256]u8 = .{0} ** 256;
-    var forward_tx_buf: [256]u8 = .{0} ** 256;
+    var forward_rx_buf: [256]u8 = @splat(0);
+    var forward_tx_buf: [256]u8 = @splat(0);
     var forward_sock = ForwardTcpSock.init(&forward_rx_buf, &forward_tx_buf);
     forward_sock.ack_delay = null;
 
@@ -2516,8 +2538,8 @@ test "stack TCP forwarder handles non-local SYN before wildcard listener" {
 test "stack TCP forwarder accepts non-local SYN and routes tuple traffic" {
     var device = TestDevice.init();
 
-    var rx_buf: [256]u8 = .{0} ** 256;
-    var tx_buf: [256]u8 = .{0} ** 256;
+    var rx_buf: [256]u8 = @splat(0);
+    var tx_buf: [256]u8 = @splat(0);
     var sock = ForwardTcpSock.init(&rx_buf, &tx_buf);
     sock.ack_delay = null;
     var sock_arr = [_]*ForwardTcpSock{&sock};
@@ -2695,8 +2717,8 @@ test "stack TCP egress dispatches SYN on connect" {
     var device = TestDevice.init();
 
     const S = struct {
-        var rx_buf: [64]u8 = .{0} ** 64;
-        var tx_buf: [64]u8 = .{0} ** 64;
+        var rx_buf: [64]u8 = @splat(0);
+        var tx_buf: [64]u8 = @splat(0);
     };
     @memset(&S.rx_buf, 0);
     @memset(&S.tx_buf, 0);
@@ -2744,8 +2766,8 @@ test "stack TCP handshake completes via listen" {
     var device = TestDevice.init();
 
     const S = struct {
-        var rx_buf: [256]u8 = .{0} ** 256;
-        var tx_buf: [256]u8 = .{0} ** 256;
+        var rx_buf: [256]u8 = @splat(0);
+        var tx_buf: [256]u8 = @splat(0);
     };
     @memset(&S.rx_buf, 0);
     @memset(&S.tx_buf, 0);
@@ -2962,8 +2984,8 @@ test "stack pollAt returns ZERO for pending TCP SYN-SENT" {
     const TcpStack = Stack(TestDevice, Sockets);
 
     const S = struct {
-        var rx_buf: [64]u8 = .{0} ** 64;
-        var tx_buf: [64]u8 = .{0} ** 64;
+        var rx_buf: [64]u8 = @splat(0);
+        var tx_buf: [64]u8 = @splat(0);
     };
     @memset(&S.rx_buf, 0);
     @memset(&S.tx_buf, 0);
@@ -3041,8 +3063,8 @@ test "stack pollAt returns retransmit deadline after SYN dispatch" {
     var device = TestDevice.init();
 
     const S = struct {
-        var rx_buf: [64]u8 = .{0} ** 64;
-        var tx_buf: [64]u8 = .{0} ** 64;
+        var rx_buf: [64]u8 = @splat(0);
+        var tx_buf: [64]u8 = @splat(0);
     };
     @memset(&S.rx_buf, 0);
     @memset(&S.tx_buf, 0);
@@ -3245,7 +3267,7 @@ test "stack DNS query dispatches via UDP" {
     var device = TestDevice.init();
 
     const S = struct {
-        var slots: [4]DnsSock.QuerySlot = [_]DnsSock.QuerySlot{.{}} ** 4;
+        var slots: [4]DnsSock.QuerySlot = @splat(.{});
     };
     @memset(@as([*]u8, @ptrCast(&S.slots))[0..@sizeOf(@TypeOf(S.slots))], 0);
     const servers = [_][4]u8{.{ 8, 8, 8, 8 }};
@@ -3287,7 +3309,7 @@ test "stack DNS ingress delivers response" {
     var device = TestDevice.init();
 
     const S = struct {
-        var slots: [4]DnsSock.QuerySlot = [_]DnsSock.QuerySlot{.{}} ** 4;
+        var slots: [4]DnsSock.QuerySlot = @splat(.{});
     };
     @memset(@as([*]u8, @ptrCast(&S.slots))[0..@sizeOf(@TypeOf(S.slots))], 0);
     const servers = [_][4]u8{.{ 8, 8, 8, 8 }};
@@ -3374,7 +3396,7 @@ test "stack DNS pollAt returns retransmit deadline" {
     var device = TestDevice.init();
 
     const S = struct {
-        var slots: [4]DnsSock.QuerySlot = [_]DnsSock.QuerySlot{.{}} ** 4;
+        var slots: [4]DnsSock.QuerySlot = @splat(.{});
     };
     @memset(@as([*]u8, @ptrCast(&S.slots))[0..@sizeOf(@TypeOf(S.slots))], 0);
     const servers = [_][4]u8{.{ 8, 8, 8, 8 }};
@@ -3502,8 +3524,8 @@ test "stack emits ARP request for unknown neighbor on TCP egress" {
     var device = TestDevice.init();
 
     const S = struct {
-        var rx_buf: [64]u8 = .{0} ** 64;
-        var tx_buf: [64]u8 = .{0} ** 64;
+        var rx_buf: [64]u8 = @splat(0);
+        var tx_buf: [64]u8 = @splat(0);
     };
     @memset(&S.rx_buf, 0);
     @memset(&S.tx_buf, 0);
@@ -3541,8 +3563,8 @@ test "stack TCP SYN sent after ARP resolution" {
     var device = TestDevice.init();
 
     const S = struct {
-        var rx_buf: [64]u8 = .{0} ** 64;
-        var tx_buf: [64]u8 = .{0} ** 64;
+        var rx_buf: [64]u8 = @splat(0);
+        var tx_buf: [64]u8 = @splat(0);
     };
     @memset(&S.rx_buf, 0);
     @memset(&S.tx_buf, 0);
@@ -3586,8 +3608,8 @@ test "stack ARP request rate limited" {
     var device = TestDevice.init();
 
     const S = struct {
-        var rx_buf: [64]u8 = .{0} ** 64;
-        var tx_buf: [64]u8 = .{0} ** 64;
+        var rx_buf: [64]u8 = @splat(0);
+        var tx_buf: [64]u8 = @splat(0);
     };
     @memset(&S.rx_buf, 0);
     @memset(&S.tx_buf, 0);
@@ -4106,7 +4128,7 @@ test "stack raw socket suppresses ICMP proto unreachable" {
     var tx_buf: [2]RawSock.Packet = undefined;
     var sock = RawSock.init(&rx_buf, &tx_buf);
     // Bind to protocol 253 (experimental).
-    try sock.bind(@enumFromInt(253));
+    try sock.bind(@fromBackingInt(253));
 
     var sock_arr = [_]*RawSock{&sock};
     var stack = RawStack.init(LOCAL_HW, .{ .raw4_sockets = &sock_arr });
@@ -4121,7 +4143,7 @@ test "stack raw socket suppresses ICMP proto unreachable" {
     // Send a packet with protocol 253.
     const payload = [_]u8{ 0xDE, 0xAD, 0xBE, 0xEF };
     var frame_buf: [256]u8 = undefined;
-    device.enqueueRx(buildIpv4Frame(&frame_buf, @enumFromInt(253), &payload));
+    device.enqueueRx(buildIpv4Frame(&frame_buf, @fromBackingInt(253), &payload));
     _ = stack.poll(Instant.ZERO, &device);
 
     // Raw socket should have received it.
@@ -4227,8 +4249,8 @@ test "TCP checksum offload skips computation" {
     var device = OffloadDevice{};
 
     const S = struct {
-        var rx_buf: [64]u8 = .{0} ** 64;
-        var tx_buf: [64]u8 = .{0} ** 64;
+        var rx_buf: [64]u8 = @splat(0);
+        var tx_buf: [64]u8 = @splat(0);
     };
     @memset(&S.rx_buf, 0);
     @memset(&S.tx_buf, 0);
@@ -4263,9 +4285,9 @@ test "burst size limits frames per poll cycle" {
 
     var device = BurstDevice{};
 
-    var rx_meta: [4]UdpSock.PacketMeta = .{UdpSock.PacketMeta{}} ** 4;
+    var rx_meta: [4]UdpSock.PacketMeta = @splat(.{});
     var rx_payload: [256]u8 = undefined;
-    var tx_meta: [4]UdpSock.PacketMeta = .{UdpSock.PacketMeta{}} ** 4;
+    var tx_meta: [4]UdpSock.PacketMeta = @splat(.{});
     var tx_payload: [256]u8 = undefined;
     var sock = UdpSock.init(&rx_meta, &rx_payload, &tx_meta, &tx_payload);
     try sock.bind(.{ .port = 3000 });
@@ -4337,8 +4359,8 @@ test "stack TCP ingress rejects bad checksum" {
     var device = TestDevice.init();
 
     const S = struct {
-        var rx_buf: [64]u8 = .{0} ** 64;
-        var tx_buf: [64]u8 = .{0} ** 64;
+        var rx_buf: [64]u8 = @splat(0);
+        var tx_buf: [64]u8 = @splat(0);
     };
     @memset(&S.rx_buf, 0);
     @memset(&S.tx_buf, 0);
@@ -4670,7 +4692,7 @@ test "stack v6 param problem for unknown next header" {
 
     const payload = [_]u8{ 0xAA, 0xBB, 0xCC, 0xDD };
     var req_buf: [256]u8 = undefined;
-    const unknown_proto: ipv6.Protocol = @enumFromInt(253);
+    const unknown_proto: ipv6.Protocol = @fromBackingInt(253);
     const frame = buildIpv6FrameFrom(&req_buf, REMOTE_V6, LOCAL_V6, unknown_proto, 64, &payload);
     device.enqueueRx(frame);
 
@@ -4885,7 +4907,7 @@ fn verifyMldReport(tx_frame: []const u8) !struct { record_type: mld.RecordType, 
     // Walk HBH extension header
     const payload = try ipv6.payloadSlice(ip_data);
     try testing.expect(payload.len >= 8); // HBH ext header minimum
-    try testing.expectEqual(@as(u8, @intFromEnum(ipv6.Protocol.icmpv6)), payload[0]); // next_header
+    try testing.expectEqual(@as(u8, @backingInt(ipv6.Protocol.icmpv6)), payload[0]); // next_header
     // RouterAlert option should be present in bytes 2..6
     try testing.expectEqual(@as(u8, 0x05), payload[2]); // RouterAlert type
     try testing.expectEqual(@as(u8, 0x02), payload[3]); // RouterAlert length
@@ -4901,7 +4923,7 @@ fn verifyMldReport(tx_frame: []const u8) !struct { record_type: mld.RecordType, 
     const pseudo = checksum_mod.pseudoHeaderChecksumV6(
         ip_repr.src_addr,
         ip_repr.dst_addr,
-        @intFromEnum(ipv6.Protocol.icmpv6),
+        @backingInt(ipv6.Protocol.icmpv6),
         @intCast(icmpv6_data.len),
     );
     try testing.expectEqual(@as(u16, 0), checksum_mod.finish(checksum_mod.calculate(icmpv6_data, pseudo)));
@@ -5002,7 +5024,7 @@ test "MLD general query triggers reports for all groups" {
     const pseudo = checksum_mod.pseudoHeaderChecksumV6(
         query_src,
         ipv6.LINK_LOCAL_ALL_NODES,
-        @intFromEnum(ipv6.Protocol.icmpv6),
+        @backingInt(ipv6.Protocol.icmpv6),
         @intCast(total_icmpv6_len),
     );
     const cksum = checksum_mod.finish(checksum_mod.calculate(icmpv6_buf[0..total_icmpv6_len], pseudo));
@@ -5057,7 +5079,7 @@ test "MLD specific query triggers report for one group" {
     const pseudo = checksum_mod.pseudoHeaderChecksumV6(
         query_src,
         group1,
-        @intFromEnum(ipv6.Protocol.icmpv6),
+        @backingInt(ipv6.Protocol.icmpv6),
         @intCast(total_icmpv6_len),
     );
     const cksum = checksum_mod.finish(checksum_mod.calculate(icmpv6_buf[0..total_icmpv6_len], pseudo));
@@ -5586,7 +5608,7 @@ test "dual-stack: NDP resolve then v6 echo" {
         const ip_repr = ipv6.parse(ip_data) catch continue;
         if (ip_repr.next_header != .icmpv6) continue;
         const icmp_data = ipv6.payloadSlice(ip_data) catch continue;
-        if (icmp_data[0] == @intFromEnum(icmpv6.Message.echo_reply)) {
+        if (icmp_data[0] == @backingInt(icmpv6.Message.echo_reply)) {
             found_reply = true;
         }
     }
@@ -5722,8 +5744,8 @@ test "stack v6 TCP socket receives SYN, replies SYN-ACK" {
     var device = TestDevice.init();
 
     const S = struct {
-        var rx_buf: [256]u8 = .{0} ** 256;
-        var tx_buf: [256]u8 = .{0} ** 256;
+        var rx_buf: [256]u8 = @splat(0);
+        var tx_buf: [256]u8 = @splat(0);
     };
     @memset(&S.rx_buf, 0);
     @memset(&S.tx_buf, 0);
@@ -5781,8 +5803,8 @@ test "stack v6 TCP ingress rejects bad checksum" {
     var device = TestDevice.init();
 
     const S = struct {
-        var rx_buf: [64]u8 = .{0} ** 64;
-        var tx_buf: [64]u8 = .{0} ** 64;
+        var rx_buf: [64]u8 = @splat(0);
+        var tx_buf: [64]u8 = @splat(0);
     };
     @memset(&S.rx_buf, 0);
     @memset(&S.tx_buf, 0);
@@ -5884,7 +5906,7 @@ test "stack v6 raw socket suppresses ICMPv6 param problem" {
     var rx_buf: [2]RawSock.Packet = undefined;
     var tx_buf: [2]RawSock.Packet = undefined;
     var sock = RawSock.init(&rx_buf, &tx_buf);
-    try sock.bind(@enumFromInt(253));
+    try sock.bind(@fromBackingInt(253));
 
     var sock_arr = [_]*RawSock{&sock};
     var stack = V6Stack.init(LOCAL_HW, .{ .raw6_sockets = &sock_arr });
@@ -5894,7 +5916,7 @@ test "stack v6 raw socket suppresses ICMPv6 param problem" {
     // Send unknown protocol 253 -- raw socket handles it
     const payload = [_]u8{ 0x01, 0x02, 0x03, 0x04 };
     var frame_buf: [256]u8 = undefined;
-    device.enqueueRx(buildIpv6FrameFrom(&frame_buf, REMOTE_V6, LOCAL_V6, @enumFromInt(253), 64, &payload));
+    device.enqueueRx(buildIpv6FrameFrom(&frame_buf, REMOTE_V6, LOCAL_V6, @fromBackingInt(253), 64, &payload));
     _ = stack.poll(Instant.ZERO, &device);
 
     // Raw socket received the payload
@@ -5915,8 +5937,8 @@ test "stack v6 TCP egress dispatches SYN on connect" {
     var device = TestDevice.init();
 
     const S = struct {
-        var rx_buf: [64]u8 = .{0} ** 64;
-        var tx_buf: [64]u8 = .{0} ** 64;
+        var rx_buf: [64]u8 = @splat(0);
+        var tx_buf: [64]u8 = @splat(0);
     };
     @memset(&S.rx_buf, 0);
     @memset(&S.tx_buf, 0);
@@ -6054,8 +6076,8 @@ test "stack v6 TCP egress triggers NDP when neighbor unknown" {
     var device = TestDevice.init();
 
     const S = struct {
-        var rx_buf: [64]u8 = .{0} ** 64;
-        var tx_buf: [64]u8 = .{0} ** 64;
+        var rx_buf: [64]u8 = @splat(0);
+        var tx_buf: [64]u8 = @splat(0);
     };
     @memset(&S.rx_buf, 0);
     @memset(&S.tx_buf, 0);
@@ -6097,8 +6119,8 @@ test "stack v6 pollAt returns ZERO for pending TCP6 SYN-SENT" {
     const V6Stack = Stack(TestDevice, Sockets);
 
     const S = struct {
-        var rx_buf: [64]u8 = .{0} ** 64;
-        var tx_buf: [64]u8 = .{0} ** 64;
+        var rx_buf: [64]u8 = @splat(0);
+        var tx_buf: [64]u8 = @splat(0);
     };
     @memset(&S.rx_buf, 0);
     @memset(&S.tx_buf, 0);
@@ -6219,7 +6241,7 @@ test "stack v6 two-fragment reassembly delivers to socket" {
     }, frag1_buf[eth_len..]) catch unreachable;
     // Fragment header: next_header=UDP, reserved=0, offset=0|M=1, ident
     const fh1_start = eth_len + ip_len;
-    frag1_buf[fh1_start + 0] = @intFromEnum(ipv6.Protocol.udp);
+    frag1_buf[fh1_start + 0] = @backingInt(ipv6.Protocol.udp);
     frag1_buf[fh1_start + 1] = 0; // reserved
     // offset_and_flags: offset=0 (in 8-octet units) << 3, M=1
     frag1_buf[fh1_start + 2] = 0;
@@ -6246,7 +6268,7 @@ test "stack v6 two-fragment reassembly delivers to socket" {
         .dst_addr = LOCAL_V6,
     }, frag2_frame_buf[eth_len2..]) catch unreachable;
     const fh2_start = eth_len2 + ip_len2;
-    frag2_frame_buf[fh2_start + 0] = @intFromEnum(ipv6.Protocol.udp);
+    frag2_frame_buf[fh2_start + 0] = @backingInt(ipv6.Protocol.udp);
     frag2_frame_buf[fh2_start + 1] = 0;
     // offset = 16 / 8 = 2 -> bits [15:3], M=0
     const offset_val: u16 = 2 << 3; // offset in 8-byte units, shifted left 3
@@ -6303,8 +6325,8 @@ test "stack v6 extension header chain walking" {
 
     // HBH extension header: next_header=TCP(6), length=0 (means 8 bytes total)
     // Bytes 2-7: PadN(4) padding
-    var hbh_buf: [8]u8 = .{0} ** 8;
-    hbh_buf[0] = @intFromEnum(ipv6.Protocol.tcp);
+    var hbh_buf: [8]u8 = @splat(0);
+    hbh_buf[0] = @backingInt(ipv6.Protocol.tcp);
     hbh_buf[1] = 0; // length = (0+1)*8 = 8 bytes
     hbh_buf[2] = 1; // PadN type
     hbh_buf[3] = 4; // PadN length = 4 bytes
@@ -6344,10 +6366,18 @@ fn IpLoopbackDevice(comptime max_frames: usize, comptime caps: ?iface_mod.Device
         pub fn capabilities() iface_mod.DeviceCapabilities {
             return caps orelse .{};
         }
-        pub fn receive(self: *Self) ?[]const u8 { return self.inner.receive(); }
-        pub fn transmit(self: *Self, frame: []const u8) void { self.inner.transmit(frame); }
-        pub fn enqueueRx(self: *Self, frame: []const u8) void { self.inner.enqueueRx(frame); }
-        pub fn dequeueTx(self: *Self) ?[]const u8 { return self.inner.dequeueTx(); }
+        pub fn receive(self: *Self) ?[]const u8 {
+            return self.inner.receive();
+        }
+        pub fn transmit(self: *Self, frame: []const u8) void {
+            self.inner.transmit(frame);
+        }
+        pub fn enqueueRx(self: *Self, frame: []const u8) void {
+            self.inner.enqueueRx(frame);
+        }
+        pub fn dequeueTx(self: *Self) ?[]const u8 {
+            return self.inner.dequeueTx();
+        }
     };
 }
 
@@ -6732,8 +6762,8 @@ test "Medium::Ip TCP socket SYN-ACK" {
     var device = TestIpDevice{};
 
     const S = struct {
-        var rx_buf: [256]u8 = .{0} ** 256;
-        var tx_buf: [256]u8 = .{0} ** 256;
+        var rx_buf: [256]u8 = @splat(0);
+        var tx_buf: [256]u8 = @splat(0);
     };
     @memset(&S.rx_buf, 0);
     @memset(&S.tx_buf, 0);
@@ -6839,7 +6869,7 @@ test "Medium::Ip IPv4 fragmented ingress" {
 
     // Build two raw IP fragments carrying a UDP datagram
     // Fragment 1: first 16 bytes of UDP (header=8 + 8 bytes payload), MF=1
-    const udp_payload = [_]u8{0xAA} ** 16;
+    const udp_payload: [16]u8 = @splat(0xAA);
     var raw_udp: [udp_wire.HEADER_LEN + 16]u8 = undefined;
     _ = udp_wire.emit(.{
         .src_port = 8000,
@@ -6911,11 +6941,21 @@ fn Ieee802154LoopbackDevice(comptime max_frames: usize) type {
         pub const medium: iface_mod.Medium = .ieee802154;
         inner: LoopbackDevice(max_frames) = .{},
 
-        pub fn init() Self { return .{}; }
-        pub fn receive(self: *Self) ?[]const u8 { return self.inner.receive(); }
-        pub fn transmit(self: *Self, frame: []const u8) void { self.inner.transmit(frame); }
-        pub fn enqueueRx(self: *Self, data: []const u8) void { self.inner.enqueueRx(data); }
-        pub fn dequeueTx(self: *Self) ?[]const u8 { return self.inner.dequeueTx(); }
+        pub fn init() Self {
+            return .{};
+        }
+        pub fn receive(self: *Self) ?[]const u8 {
+            return self.inner.receive();
+        }
+        pub fn transmit(self: *Self, frame: []const u8) void {
+            self.inner.transmit(frame);
+        }
+        pub fn enqueueRx(self: *Self, data: []const u8) void {
+            self.inner.enqueueRx(data);
+        }
+        pub fn dequeueTx(self: *Self) ?[]const u8 {
+            return self.inner.dequeueTx();
+        }
         pub fn capabilities() iface_mod.DeviceCapabilities {
             return .{ .max_transmission_unit = ieee802154.MAX_FRAME_LEN };
         }
@@ -6997,7 +7037,9 @@ test "802.15.4 IPHC ingress: ICMPv6 echo request produces reply" {
     var icmpv6_buf: [128]u8 = undefined;
     const icmpv6_len = icmpv6.emit(
         icmpv6.Repr{ .echo_request = .{ .ident = 0x1234, .seq_no = 1, .data = &echo_data } },
-        src_ipv6, dst_ipv6, &icmpv6_buf,
+        src_ipv6,
+        dst_ipv6,
+        &icmpv6_buf,
     ) catch unreachable;
 
     var iphc_payload: [256]u8 = undefined;
@@ -7116,7 +7158,9 @@ test "802.15.4 PAN ID filtering drops wrong PAN" {
     var icmpv6_buf: [128]u8 = undefined;
     const icmpv6_len = icmpv6.emit(
         icmpv6.Repr{ .echo_request = .{ .ident = 1, .seq_no = 1, .data = &[_]u8{} } },
-        src_ipv6, dst_ipv6, &icmpv6_buf,
+        src_ipv6,
+        dst_ipv6,
+        &icmpv6_buf,
     ) catch unreachable;
 
     var iphc_payload: [256]u8 = undefined;
